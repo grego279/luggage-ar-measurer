@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YOLOv8n Test - Détection Bagage</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0"></script>
+    <style>
+        body { margin: 0; background: #13002F; color: white; font-family: sans-serif; overflow: hidden; display: flex; flex-direction: column; align-items: center; }
+        #container { position: relative; width: 100vw; height: 80vh; }
+        video, canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
+        #ui { padding: 20px; text-align: center; }
+        .status { color: #FF3FA6; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+<div id="ui">
+    <h2>YOLOv8n Test</h2>
+    <div id="status" class="status">Chargement du modèle...</div>
+</div>
+
+<div id="container">
+    <video id="video" autoplay muted playsinline></video>
+    <canvas id="canvas"></canvas>
+</div>
+
+<script>
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const statusDiv = document.getElementById('status');
+
+    let model;
+    // Indices des classes COCO pour les bagages : backpack (24), handbag (26), suitcase (28)
+    const LUGGAGE_CLASSES = [24, 26, 28]; 
+
+    async function setupCamera() {
+        const stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: 'environment' },
+            audio: false
+        });
+        video.srcObject = stream;
+        return new Promise(resolve => video.onloadedmetadata = resolve);
+    }
+
+    async function loadModel() {
+        try {
+            // Remplace par l'URL de ton modèle sur GitHub Pages
+            model = await tf.loadGraphModel('./model/model.json');
+            statusDiv.textContent = "Modèle prêt ! Analyse en cours...";
+            detectFrame();
+        } catch (e) {
+            statusDiv.textContent = "Erreur chargement modèle : " + e;
+        }
+    }
+
+    async function detectFrame() {
+        tf.engine().startScope();
+
+        // 1. Prétraitement : YOLOv8n attend du 640x640
+        const img = tf.browser.fromPixels(video);
+        const resized = tf.image.resizeBilinear(img, [640, 640]);
+        const input = resized.div(255.0).expandDims(0);
+
+        // 2. Inférence
+        const output = model.execute(input); // Sortie: [1, 84, 8400]
+        
+        // 3. Post-traitement (Transposer pour avoir [8400, 84])
+        const res = output.transpose([0, 2, 1]).squeeze();
+        const [boxes, scores, classes] = parseYOLO(res);
+
+        // 4. Suppression des doublons (NMS)
+        const nmsIndices = await tf.image.nonMaxSuppressionAsync(boxes, scores, 5, 0.5, 0.5);
+        const finalDetections = nmsIndices.arraySync().map(idx => ({
+            box: boxes.arraySync()[idx],
+            score: scores.arraySync()[idx],
+            class: classes[idx]
+        }));
+
+        render(finalDetections);
+
+        tf.engine().endScope();
+        requestAnimationFrame(detectFrame);
+    }
+
+    function parseYOLO(res) {
+        // On sépare les coordonnées des boîtes et les scores des 80 classes
+        const rawBoxes = res.slice([0, 0], [-1, 4]);
+        const rawScores = res.slice([0, 4], [-1, 80]);
+
+        // On ne garde que le score max par ligne
+        const maxScores = rawScores.max(1);
+        const classIndices = rawScores.argMax(1).dataSync();
+
+        // Conversion [x_center, y_center, w, h] -> [y1, x1, y2, x2] pour le NMS de TFJS
+        const [x_center, y_center, w, h] = tf.split(rawBoxes, 4, 1);
+        const y1 = y_center.sub(h.div(2));
+        const x1 = x_center.sub(w.div(2));
+        const y2 = y_center.add(h.div(2));
+        const x2 = x_center.add(w.div(2));
+        
+        const boxes = tf.concat([y1, x1, y2, x2], 1);
+
+        return [boxes, maxScores, classIndices];
+    }
+
+    function render(detections) {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        detections.forEach(d => {
+            if (LUGGAGE_CLASSES.includes(d.class)) {
+                let [y1, x1, y2, x2] = d.box;
+                
+                // Redimensionnement aux coordonnées réelles du canvas
+                x1 *= canvas.width / 640;
+                x2 *= canvas.width / 640;
+                y1 *= canvas.height / 640;
+                y2 *= canvas.height / 640;
+
+                ctx.strokeStyle = "#FF3FA6";
+                ctx.lineWidth = 4;
+                ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+                
+                ctx.fillStyle = "#FF3FA6";
+                ctx.font = "bold 20px Arial";
+                ctx.fillText(`Bagage (${Math.round(d.score * 100)}%)`, x1, y1 > 20 ? y1 - 10 : 20);
+            }
+        });
+    }
+
+    async function init() {
+        await setupCamera();
+        await loadModel();
+    }
+
+    init();
+</script>
+</body>
+</html>
