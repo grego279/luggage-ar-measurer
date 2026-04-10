@@ -17,6 +17,14 @@
     video, #canvas-live, #canvas-photo { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
     #canvas-photo { display: none; cursor: crosshair; touch-action: none; }
 
+    /* ── NOUVEAU : canvas WebXR ── */
+    #canvas-xr {
+      position: absolute; top: 0; left: 0;
+      width: 100%; height: 100%;
+      display: none;
+      touch-action: none;
+    }
+
     #btn-bar {
       width: 100%; display: flex; justify-content: center;
       gap: 10px; padding: 12px 16px;
@@ -29,9 +37,11 @@
       border: none; border-radius: 8px; cursor: pointer;
     }
     #btn-capture  { background: #4CAF50; color: white; }
-    #btn-retake   { background: #888; color: white; display: none; }
-    #btn-confirm  { background: #2196F3; color: white; display: none; }
+    #btn-retake   { background: #888;    color: white; display: none; }
+    /* ── SUPPRIMÉ : #btn-confirm (carte) ── */
     #btn-measure  { background: #FF9800; color: white; display: none; }
+    /* ── NOUVEAU : bouton AR ── */
+    #btn-ar       { background: #9C27B0; color: white; display: none; }
 
     #result {
       width: 100%; background: rgba(255,255,255,0.08);
@@ -44,9 +54,22 @@
     .dim-label { font-size: 12px; color: #aaa; margin-bottom: 10px; }
     #conf { font-size: 12px; color: #888; }
 
+    /* ── NOUVEAU : badge mode mesure ── */
+    #depth-badge {
+      font-size: 11px; color: #00FF99; margin-top: 4px;
+    }
+
     #instr {
       font-size: 12px; color: #ccc; text-align: center;
       padding: 4px 16px 0; min-height: 18px;
+    }
+
+    /* ── NOUVEAU : overlay de profondeur (debug optionnel) ── */
+    #depth-overlay {
+      position: absolute; top: 8px; right: 8px;
+      background: rgba(0,0,0,0.55); color: #00FF99;
+      font-size: 11px; padding: 4px 8px; border-radius: 6px;
+      display: none;
     }
   </style>
 </head>
@@ -60,13 +83,19 @@
   <video id="video" autoplay muted playsinline></video>
   <canvas id="canvas-live"></canvas>
   <canvas id="canvas-photo"></canvas>
+  <!-- NOUVEAU : canvas dédié à la session WebXR -->
+  <canvas id="canvas-xr"></canvas>
+  <!-- NOUVEAU : affichage profondeur live -->
+  <div id="depth-overlay">Profondeur : --</div>
 </div>
 
 <div id="btn-bar">
-  <button id="btn-capture"  onclick="capturePhoto()">Capturer</button>
-  <button id="btn-retake"   onclick="retake()">Reprendre</button>
-  <button id="btn-confirm"  onclick="confirmCard()">Confirmer la carte</button>
-  <button id="btn-measure"  onclick="measure()">Mesurer</button>
+  <button id="btn-capture" onclick="capturePhoto()">Capturer</button>
+  <button id="btn-retake"  onclick="retake()">Reprendre</button>
+  <!-- SUPPRIMÉ : btn-confirm (plus besoin de confirmer la carte) -->
+  <!-- NOUVEAU : bouton pour lancer la session AR de mesure -->
+  <button id="btn-ar"      onclick="startARMeasure()">Mesurer en AR</button>
+  <button id="btn-measure" onclick="measure()">Mesurer (fallback)</button>
 </div>
 
 <div id="result">
@@ -74,12 +103,18 @@
   <div class="dim-row" id="res-dims"></div>
   <div class="dim-label">largeur × hauteur (cm)</div>
   <div id="conf"></div>
+  <!-- NOUVEAU : indique la source de la mesure -->
+  <div id="depth-badge"></div>
 </div>
 
 <script>
 const video       = document.getElementById('video');
 const canvasLive  = document.getElementById('canvas-live');
 const canvasPhoto = document.getElementById('canvas-photo');
+/* NOUVEAU */
+const canvasXR    = document.getElementById('canvas-xr');
+const depthOverlay= document.getElementById('depth-overlay');
+
 const ctxLive     = canvasLive.getContext('2d');
 const ctxPhoto    = canvasPhoto.getContext('2d');
 const statusDiv   = document.getElementById('status');
@@ -91,17 +126,24 @@ const CLASS_INFO = {
   26: { label: 'Sac à main', color: '#00E5FF' },
   28: { label: 'Valise',     color: '#00FF99' }
 };
-const CARD_W_MM = 85.6;
-const CARD_H_MM = 54.0;
+/* SUPPRIMÉ : CARD_W_MM, CARD_H_MM — plus nécessaires */
 
 let model, animId;
 let lastDetections = [];
 let photoImg = null;
-let cardBox  = null;
+/* SUPPRIMÉ : cardBox — remplacé par les données de profondeur */
 let bagBox   = null;
-let drawing  = false;
-let startX, startY, endX, endY;
-let scale = 1;
+let scale    = 1;
+
+/* ── NOUVEAU : état WebXR ─────────────────────────────────── */
+let xrSession      = null;   // session AR active
+let xrRefSpace     = null;   // référentiel local
+let xrDepthInfo    = null;   // dernière XRDepthInformation reçue
+let xrFovHoriz     = null;   // FOV horizontal (radians) → pour conversion px→cm
+let xrFovVert      = null;   // FOV vertical
+let arMeasureDone  = false;
+let depthAtBagBox  = null;   // { dW_cm, dH_cm } calculés via ARCore
+/* ──────────────────────────────────────────────────────────── */
 
 // ── Caméra ────────────────────────────────────────────────────
 async function setupCamera() {
@@ -118,7 +160,7 @@ async function loadModel() {
   try {
     model = await tf.loadGraphModel('./model/model.json');
     statusDiv.textContent = 'Modèle prêt — pointe vers ton bagage';
-    instrDiv.textContent  = 'Place la carte bancaire à côté du bagage puis capture';
+    instrDiv.textContent  = 'Capture puis mesure via AR (S22 Ultra)';
     detectLoop();
   } catch(e) {
     statusDiv.textContent = 'Erreur chargement modèle : ' + e;
@@ -193,12 +235,10 @@ function capturePhoto() {
   cancelAnimationFrame(animId);
   video.pause();
 
-  // Copier la frame dans canvasPhoto
   canvasPhoto.width  = video.videoWidth;
   canvasPhoto.height = video.videoHeight;
   ctxPhoto.drawImage(video, 0, 0);
 
-  // Récupérer la meilleure bbox bagage depuis lastDetections
   bagBox = null;
   if (lastDetections.length > 0) {
     const best = lastDetections.reduce((a, b) => b.score > a.score ? b : a);
@@ -209,24 +249,27 @@ function capturePhoto() {
     drawBagBox();
   }
 
-  // Afficher photo, masquer vidéo+canvas live
   video.style.display       = 'none';
   canvasLive.style.display  = 'none';
   canvasPhoto.style.display = 'block';
 
-  // Échelle d'affichage (le canvas est mis à l'échelle par CSS)
   scale = canvasPhoto.width / canvasPhoto.getBoundingClientRect().width;
 
   document.getElementById('btn-capture').style.display = 'none';
   document.getElementById('btn-retake').style.display  = 'inline-block';
-  document.getElementById('btn-confirm').style.display = 'inline-block';
 
-  statusDiv.textContent = bagBox
-    ? `${CLASS_INFO[bagBox.cls].label} détecté — entoure maintenant la carte bancaire`
-    : 'Aucun bagage détecté — entoure quand même la carte bancaire';
-  instrDiv.textContent = 'Glisse le doigt pour entourer la carte';
+  /* MODIFIÉ : on propose AR en priorité, fallback carte supprimé */
+  if (bagBox) {
+    checkARSupport(); // affiche btn-ar ou btn-measure selon dispo
+    statusDiv.textContent = `${CLASS_INFO[bagBox.cls].label} détecté`;
+    instrDiv.textContent  = 'Lance la mesure AR pour obtenir les dimensions';
+  } else {
+    statusDiv.textContent = 'Aucun bagage détecté — reprends la photo';
+    instrDiv.textContent  = '';
+  }
 
-  addTouchListeners();
+  photoImg = new Image();
+  photoImg.src = canvasPhoto.toDataURL();
 }
 
 function drawBagBox() {
@@ -244,123 +287,218 @@ function drawBagBox() {
   ctxPhoto.fillText(label, bagBox.x1 + 5, bagBox.y1 > 28 ? bagBox.y1 - 6 : 20);
 }
 
-// ── Sélection carte (touch + mouse) ──────────────────────────
-function getPos(e) {
-  const rect = canvasPhoto.getBoundingClientRect();
-  const src  = e.touches ? e.touches[0] : e;
-  return {
-    x: (src.clientX - rect.left) * scale,
-    y: (src.clientY - rect.top)  * scale
-  };
+/* ═══════════════════════════════════════════════════════════════
+   NOUVEAU BLOC : WebXR Depth Sensing
+   Remplace entièrement la logique de sélection de carte bancaire
+   ══════════════════════════════════════════════════════════════ */
+
+/**
+ * Vérifie si WebXR + depth-sensing est disponible.
+ * Affiche le bon bouton en conséquence.
+ */
+async function checkARSupport() {
+  if (navigator.xr) {
+    try {
+      const ok = await navigator.xr.isSessionSupported('immersive-ar');
+      if (ok) {
+        document.getElementById('btn-ar').style.display = 'inline-block';
+        instrDiv.textContent = 'Appuie sur "Mesurer en AR" — garde le bagage dans le cadre';
+        return;
+      }
+    } catch(e) {}
+  }
+  // Fallback : mesure sans profondeur (dégradé sans carte)
+  document.getElementById('btn-measure').style.display = 'inline-block';
+  instrDiv.textContent = 'AR non disponible — mesure approximative sans référence';
 }
 
-function addTouchListeners() {
-  ['mousedown','touchstart'].forEach(ev => canvasPhoto.addEventListener(ev, e => {
-    e.preventDefault();
-    const p = getPos(e);
-    startX = p.x; startY = p.y; drawing = true;
-    cardBox = null;
-    document.getElementById('btn-measure').style.display = 'none';
-  }, { passive: false }));
+/**
+ * Lance une session WebXR immersive-ar avec depth-sensing.
+ * Récupère la profondeur au centre de la bbox bagage,
+ * puis calcule largeur et hauteur réelles en cm.
+ */
+async function startARMeasure() {
+  if (!bagBox) { statusDiv.textContent = 'Aucune bbox bagage !'; return; }
 
-  ['mousemove','touchmove'].forEach(ev => canvasPhoto.addEventListener(ev, e => {
-    e.preventDefault();
-    if (!drawing) return;
-    const p = getPos(e);
-    endX = p.x; endY = p.y;
-    redrawPhoto();
-    ctxPhoto.strokeStyle = '#FFD700';
-    ctxPhoto.lineWidth   = 2;
-    ctxPhoto.setLineDash([6, 3]);
-    ctxPhoto.strokeRect(startX, startY, endX - startX, endY - startY);
-    ctxPhoto.setLineDash([]);
-  }, { passive: false }));
+  statusDiv.textContent = 'Ouverture session AR…';
+  instrDiv.textContent  = 'Garde le bagage visible à l\'écran';
 
-  ['mouseup','touchend'].forEach(ev => canvasPhoto.addEventListener(ev, e => {
-    e.preventDefault();
-    drawing = false;
-    cardBox = {
-      x1: Math.round(Math.min(startX, endX)),
-      y1: Math.round(Math.min(startY, endY)),
-      x2: Math.round(Math.max(startX, endX)),
-      y2: Math.round(Math.max(startY, endY))
-    };
-    redrawPhoto();
-    ctxPhoto.strokeStyle = '#FFD700';
-    ctxPhoto.lineWidth   = 2;
-    ctxPhoto.strokeRect(cardBox.x1, cardBox.y1, cardBox.x2 - cardBox.x1, cardBox.y2 - cardBox.y1);
-    ctxPhoto.font = '14px sans-serif';
-    ctxPhoto.fillStyle = '#FFD700';
-    ctxPhoto.fillText('Carte', cardBox.x1 + 4, cardBox.y1 > 18 ? cardBox.y1 - 4 : 14);
-    instrDiv.textContent = 'Vérifie le cadre jaune sur la carte puis confirme';
-  }, { passive: false }));
-}
-
-function redrawPhoto() {
-  ctxPhoto.clearRect(0, 0, canvasPhoto.width, canvasPhoto.height);
-  ctxPhoto.drawImage(photoImg || video, 0, 0);
-  drawBagBox();
-}
-
-// Stocker l'image capturée pour redessiner
-const _origCapture = capturePhoto;
-(function patchCapture() {
-  const orig = window.capturePhoto;
-  window.capturePhoto = function() {
-    _origCapture();
-    photoImg = new Image();
-    photoImg.src = canvasPhoto.toDataURL();
-  };
-})();
-
-function confirmCard() {
-  if (!cardBox || (cardBox.x2 - cardBox.x1) < 10) {
-    statusDiv.textContent = 'Dessine dabord un rectangle autour de la carte !';
+  try {
+    // NOUVEAU : demande de session AR avec depth-sensing obligatoire
+    xrSession = await navigator.xr.requestSession('immersive-ar', {
+      requiredFeatures: ['depth-sensing', 'local'],
+      depthSensing: {
+        usagePreference:      ['cpu-optimized'],
+        dataFormatPreference: ['luminance-alpha']
+      }
+    });
+  } catch(e) {
+    // depth-sensing non supporté → fallback sans référence
+    statusDiv.textContent = 'Depth sensing indisponible : ' + e.message;
+    instrDiv.textContent  = 'Mesure dégradée (sans profondeur)';
+    document.getElementById('btn-measure').style.display = 'inline-block';
+    document.getElementById('btn-ar').style.display      = 'none';
     return;
   }
-  document.getElementById('btn-confirm').style.display = 'none';
-  document.getElementById('btn-measure').style.display = 'inline-block';
-  statusDiv.textContent = 'Carte confirmée — clique sur Mesurer !';
-  instrDiv.textContent  = '';
+
+  // NOUVEAU : configuration du renderer WebXR sur canvas-xr
+  const gl = canvasXR.getContext('webgl', { xrCompatible: true });
+  await xrSession.updateRenderState({ baseLayer: new XRWebGLLayer(xrSession, gl) });
+  xrRefSpace = await xrSession.requestReferenceSpace('local');
+
+  arMeasureDone = false;
+  depthAtBagBox = null;
+
+  // NOUVEAU : boucle de rendu XR — on ne fait qu'une seule mesure
+  xrSession.requestAnimationFrame(onXRFrame);
+
+  canvasPhoto.style.display = 'none';
+  canvasXR.style.display    = 'block';
+  depthOverlay.style.display = 'block';
+  document.getElementById('btn-ar').style.display = 'none';
 }
 
-// ── Mesure ────────────────────────────────────────────────────
+/**
+ * NOUVEAU : callback boucle XR.
+ * Lit la carte de profondeur ARCore et calcule les dimensions.
+ */
+function onXRFrame(time, frame) {
+  if (!xrSession) return;
+
+  const pose = frame.getViewerPose(xrRefSpace);
+  if (!pose || arMeasureDone) {
+    xrSession.requestAnimationFrame(onXRFrame);
+    return;
+  }
+
+  for (const view of pose.views) {
+    // NOUVEAU : récupération de XRDepthInformation (ARCore)
+    const depthInfo = frame.getDepthInformation(view);
+    if (!depthInfo) continue;
+
+    xrDepthInfo = depthInfo;
+
+    // NOUVEAU : largeur/hauteur du canvas de profondeur (pixels ARCore)
+    const dW = depthInfo.width;
+    const dH = depthInfo.height;
+
+    // NOUVEAU : coordonnées normalisées [0–1] du centre de la bbox bagage
+    const cx = (bagBox.x1 + bagBox.x2) / 2 / canvasPhoto.width;
+    const cy = (bagBox.y1 + bagBox.y2) / 2 / canvasPhoto.height;
+
+    // NOUVEAU : profondeur au centre du bagage (en mètres)
+    const depthM = depthInfo.getDepthInMeters(cx, cy);
+
+    depthOverlay.textContent = `Profondeur : ${(depthM * 100).toFixed(1)} cm`;
+
+    if (depthM <= 0 || depthM > 10) continue; // valeur invalide
+
+    // NOUVEAU : FOV de la caméra AR (fourni par la projection XR)
+    const proj  = view.projectionMatrix;
+    // proj[0] = 2*near/(right-left) → fovH = 2*atan(1/proj[0])
+    // proj[5] = 2*near/(top-bottom)  → fovV = 2*atan(1/proj[5])
+    xrFovHoriz = 2 * Math.atan(1 / Math.abs(proj[0]));
+    xrFovVert  = 2 * Math.atan(1 / Math.abs(proj[5]));
+
+    // NOUVEAU : taille de la bbox en fraction de l'image
+    const fracW = (bagBox.x2 - bagBox.x1) / canvasPhoto.width;
+    const fracH = (bagBox.y2 - bagBox.y1) / canvasPhoto.height;
+
+    // NOUVEAU : conversion en cm via tangente (projection perspective)
+    // dim_réelle = 2 * distance * tan(fov/2) * fraction
+    const realW_cm = (2 * depthM * Math.tan(xrFovHoriz / 2) * fracW * 100).toFixed(1);
+    const realH_cm = (2 * depthM * Math.tan(xrFovVert  / 2) * fracH * 100).toFixed(1);
+
+    depthAtBagBox = { dW_cm: parseFloat(realW_cm), dH_cm: parseFloat(realH_cm), depthM };
+    arMeasureDone = true;
+
+    // NOUVEAU : affichage du résultat et fin de session
+    showResult(depthAtBagBox.dW_cm, depthAtBagBox.dH_cm, 'WebXR Depth Sensing (ARCore)');
+    endARSession();
+    return;
+  }
+
+  xrSession.requestAnimationFrame(onXRFrame);
+}
+
+/**
+ * NOUVEAU : ferme proprement la session WebXR.
+ */
+function endARSession() {
+  if (xrSession) {
+    xrSession.end().catch(() => {});
+    xrSession = null;
+  }
+  canvasXR.style.display    = 'none';
+  canvasPhoto.style.display = 'block';
+  depthOverlay.style.display = 'none';
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   FIN DU NOUVEAU BLOC WebXR
+   ══════════════════════════════════════════════════════════════ */
+
+/* MODIFIÉ : confirmCard() supprimé — plus de carte bancaire */
+
+// ── Mesure fallback (sans profondeur) ─────────────────────────
+/* MODIFIÉ : cette fonction est désormais le fallback dégradé.
+   Elle ne peut plus utiliser de carte comme référence.
+   Elle affiche un avertissement et estime via FOV fixe (~70°). */
 function measure() {
-  if (!cardBox) { statusDiv.textContent = 'Sélectionne dabord la carte !'; return; }
-  if (!bagBox)  { statusDiv.textContent = 'Aucun bagage détecté sur cette photo.'; return; }
+  if (!bagBox) { statusDiv.textContent = 'Aucun bagage détecté.'; return; }
 
-  const cardWpx = cardBox.x2 - cardBox.x1;
-  const cardHpx = cardBox.y2 - cardBox.y1;
-  const ratio   = ((cardWpx / CARD_W_MM) + (cardHpx / CARD_H_MM)) / 2;
+  // Estimation grossière : hypothèse bagage à ~1 m, FOV ~70°
+  const assumedDepth = 1.0; // mètre
+  const assumedFovH  = (70 * Math.PI) / 180;
+  const assumedFovV  = (50 * Math.PI) / 180;
 
-  const bagWcm = ((bagBox.x2 - bagBox.x1) / ratio / 10).toFixed(1);
-  const bagHcm = ((bagBox.y2 - bagBox.y1) / ratio / 10).toFixed(1);
+  const fracW = (bagBox.x2 - bagBox.x1) / canvasPhoto.width;
+  const fracH = (bagBox.y2 - bagBox.y1) / canvasPhoto.height;
 
+  const rW = (2 * assumedDepth * Math.tan(assumedFovH / 2) * fracW * 100).toFixed(1);
+  const rH = (2 * assumedDepth * Math.tan(assumedFovV / 2) * fracH * 100).toFixed(1);
+
+  showResult(parseFloat(rW), parseFloat(rH), 'Estimation (sans profondeur — imprécis)');
+}
+
+// ── NOUVEAU : affichage résultat unifié ───────────────────────
+function showResult(wCm, hCm, source) {
   document.getElementById('res-class').textContent = CLASS_INFO[bagBox.cls].label;
-  document.getElementById('res-dims').textContent  = `${bagWcm} × ${bagHcm}`;
+  document.getElementById('res-dims').textContent  = `${wCm} × ${hCm}`;
   document.getElementById('conf').textContent      = `Confiance YOLO : ${Math.round(bagBox.score * 100)}%`;
+  document.getElementById('depth-badge').textContent = `Source : ${source}`;
   document.getElementById('result').style.display  = 'block';
 
   statusDiv.textContent = 'Mesure terminée !';
-  instrDiv.textContent  = 'Vérifie avec un mètre et reprends si nécessaire';
+  instrDiv.textContent  = 'Reprends si le résultat semble incorrect';
 }
 
 // ── Reprendre ─────────────────────────────────────────────────
 function retake() {
-  cardBox = null; bagBox = null; photoImg = null;
+  /* MODIFIÉ : suppression du reset cardBox */
+  bagBox = null; photoImg = null;
+  endARSession(); // NOUVEAU : assure la fermeture propre de toute session XR
+
   canvasPhoto.style.display = 'none';
+  canvasXR.style.display    = 'none';          // NOUVEAU
   canvasLive.style.display  = 'block';
   video.style.display       = 'block';
   video.play();
 
   document.getElementById('btn-capture').style.display = 'inline-block';
   document.getElementById('btn-retake').style.display  = 'none';
-  document.getElementById('btn-confirm').style.display = 'none';
+  /* SUPPRIMÉ : reset btn-confirm */
   document.getElementById('btn-measure').style.display = 'none';
+  document.getElementById('btn-ar').style.display      = 'none'; // NOUVEAU
   document.getElementById('result').style.display      = 'none';
 
+  /* NOUVEAU : reset état AR */
+  xrDepthInfo   = null;
+  depthAtBagBox = null;
+  arMeasureDone = false;
+
   statusDiv.textContent = 'Modèle prêt — pointe vers ton bagage';
-  instrDiv.textContent  = 'Place la carte bancaire à côté du bagage puis capture';
+  instrDiv.textContent  = 'Capture puis mesure via AR (S22 Ultra)';
   detectLoop();
 }
 
