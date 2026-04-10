@@ -1,142 +1,375 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>YOLOv8n Test - Détection Bagage</title>
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0"></script>
-    <style>
-        body { margin: 0; background: #13002F; color: white; font-family: sans-serif; overflow: hidden; display: flex; flex-direction: column; align-items: center; }
-        #container { position: relative; width: 100vw; height: 80vh; }
-        video, canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
-        #ui { padding: 20px; text-align: center; }
-        .status { color: #FF3FA6; font-weight: bold; }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mesure Bagage</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #13002F; color: white; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
+
+    h2 { font-size: 18px; font-weight: 500; padding: 14px 0 4px; }
+
+    #status { color: #FF3FA6; font-weight: bold; font-size: 13px; padding-bottom: 8px; min-height: 20px; text-align: center; padding: 0 16px 8px; }
+
+    #container { position: relative; width: 100vw; flex: 1; }
+    video, #canvas-live, #canvas-photo { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
+    #canvas-photo { display: none; cursor: crosshair; touch-action: none; }
+
+    #btn-bar {
+      width: 100%; display: flex; justify-content: center;
+      gap: 10px; padding: 12px 16px;
+      background: rgba(19,0,47,0.95);
+      flex-wrap: wrap;
+    }
+
+    button {
+      padding: 10px 18px; font-size: 14px; font-weight: 500;
+      border: none; border-radius: 8px; cursor: pointer;
+    }
+    #btn-capture  { background: #4CAF50; color: white; }
+    #btn-retake   { background: #888; color: white; display: none; }
+    #btn-confirm  { background: #2196F3; color: white; display: none; }
+    #btn-measure  { background: #FF9800; color: white; display: none; }
+
+    #result {
+      width: 100%; background: rgba(255,255,255,0.08);
+      border-top: 1px solid rgba(255,255,255,0.15);
+      padding: 14px 20px; display: none;
+      text-align: center;
+    }
+    #result h3 { font-size: 16px; margin-bottom: 8px; color: #FF3FA6; }
+    .dim-row { font-size: 22px; font-weight: 500; margin: 4px 0; }
+    .dim-label { font-size: 12px; color: #aaa; margin-bottom: 10px; }
+    #conf { font-size: 12px; color: #888; }
+
+    #instr {
+      font-size: 12px; color: #ccc; text-align: center;
+      padding: 4px 16px 0; min-height: 18px;
+    }
+  </style>
 </head>
 <body>
 
-<div id="ui">
-    <h2>YOLOv8n Test</h2>
-    <div id="status" class="status">Chargement du modèle...</div>
+<h2>Mesure Bagage</h2>
+<div id="status">Chargement du modèle...</div>
+<div id="instr"></div>
+
+<div id="container" style="height: 60vh;">
+  <video id="video" autoplay muted playsinline></video>
+  <canvas id="canvas-live"></canvas>
+  <canvas id="canvas-photo"></canvas>
 </div>
 
-<div id="container">
-    <video id="video" autoplay muted playsinline></video>
-    <canvas id="canvas"></canvas>
+<div id="btn-bar">
+  <button id="btn-capture"  onclick="capturePhoto()">Capturer</button>
+  <button id="btn-retake"   onclick="retake()">Reprendre</button>
+  <button id="btn-confirm"  onclick="confirmCard()">Confirmer la carte</button>
+  <button id="btn-measure"  onclick="measure()">Mesurer</button>
+</div>
+
+<div id="result">
+  <h3 id="res-class"></h3>
+  <div class="dim-row" id="res-dims"></div>
+  <div class="dim-label">largeur × hauteur (cm)</div>
+  <div id="conf"></div>
 </div>
 
 <script>
-    const video = document.getElementById('video');
-    const canvas = document.getElementById('canvas');
-    const ctx = canvas.getContext('2d');
-    const statusDiv = document.getElementById('status');
+const video       = document.getElementById('video');
+const canvasLive  = document.getElementById('canvas-live');
+const canvasPhoto = document.getElementById('canvas-photo');
+const ctxLive     = canvasLive.getContext('2d');
+const ctxPhoto    = canvasPhoto.getContext('2d');
+const statusDiv   = document.getElementById('status');
+const instrDiv    = document.getElementById('instr');
 
-    let model;
-    // Indices des classes COCO pour les bagages : backpack (24), handbag (26), suitcase (28)
-    const LUGGAGE_CLASSES = [24, 26, 28]; 
+const LUGGAGE_CLASSES = [24, 26, 28];
+const CLASS_INFO = {
+  24: { label: 'Sac à dos',  color: '#FF3FA6' },
+  26: { label: 'Sac à main', color: '#00E5FF' },
+  28: { label: 'Valise',     color: '#00FF99' }
+};
+const CARD_W_MM = 85.6;
+const CARD_H_MM = 54.0;
 
-    async function setupCamera() {
-        const stream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: 'environment' },
-            audio: false
-        });
-        video.srcObject = stream;
-        return new Promise(resolve => video.onloadedmetadata = resolve);
-    }
+let model, animId;
+let lastDetections = [];
+let photoImg = null;
+let cardBox  = null;
+let bagBox   = null;
+let drawing  = false;
+let startX, startY, endX, endY;
+let scale = 1;
 
-    async function loadModel() {
-        try {
-            // Remplace par l'URL de ton modèle sur GitHub Pages
-            model = await tf.loadGraphModel('./model/model.json');
-            statusDiv.textContent = "Modèle prêt ! Analyse en cours...";
-            detectFrame();
-        } catch (e) {
-            statusDiv.textContent = "Erreur chargement modèle : " + e;
-        }
-    }
+// ── Caméra ────────────────────────────────────────────────────
+async function setupCamera() {
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+    audio: false
+  });
+  video.srcObject = stream;
+  return new Promise(r => video.onloadedmetadata = r);
+}
 
-    async function detectFrame() {
-        tf.engine().startScope();
+// ── Modèle ────────────────────────────────────────────────────
+async function loadModel() {
+  try {
+    model = await tf.loadGraphModel('./model/model.json');
+    statusDiv.textContent = 'Modèle prêt — pointe vers ton bagage';
+    instrDiv.textContent  = 'Place la carte bancaire à côté du bagage puis capture';
+    detectLoop();
+  } catch(e) {
+    statusDiv.textContent = 'Erreur chargement modèle : ' + e;
+  }
+}
 
-        // 1. Prétraitement : YOLOv8n attend du 640x640
-        const img = tf.browser.fromPixels(video);
-        const resized = tf.image.resizeBilinear(img, [640, 640]);
-        const input = resized.div(255.0).expandDims(0);
+// ── Détection en temps réel ───────────────────────────────────
+function detectLoop() {
+  canvasLive.width  = video.videoWidth  || 640;
+  canvasLive.height = video.videoHeight || 480;
 
-        // 2. Inférence
-        const output = model.execute(input); // Sortie: [1, 84, 8400]
-        
-        // 3. Post-traitement (Transposer pour avoir [8400, 84])
-        const res = output.transpose([0, 2, 1]).squeeze();
-        const [boxes, scores, classes] = parseYOLO(res);
+  async function frame() {
+    if (!model || video.paused || video.ended) { animId = requestAnimationFrame(frame); return; }
+    tf.engine().startScope();
+    try {
+      const img     = tf.browser.fromPixels(video);
+      const resized = tf.image.resizeBilinear(img, [640, 640]);
+      const input   = resized.div(255.0).expandDims(0);
+      const output  = model.execute(input);
+      const res     = output.transpose([0, 2, 1]).squeeze();
+      const dets    = await parseYOLO(res);
+      lastDetections = dets;
+      renderLive(dets);
+    } catch(e) {}
+    tf.engine().endScope();
+    animId = requestAnimationFrame(frame);
+  }
+  animId = requestAnimationFrame(frame);
+}
 
-        // 4. Suppression des doublons (NMS)
-        const nmsIndices = await tf.image.nonMaxSuppressionAsync(boxes, scores, 5, 0.5, 0.5);
-        const finalDetections = nmsIndices.arraySync().map(idx => ({
-            box: boxes.arraySync()[idx],
-            score: scores.arraySync()[idx],
-            class: classes[idx]
-        }));
+async function parseYOLO(res) {
+  const rawBoxes  = res.slice([0, 0], [-1, 4]);
+  const rawScores = res.slice([0, 4], [-1, 80]);
+  const maxScores = rawScores.max(1);
+  const classIdx  = rawScores.argMax(1).dataSync();
+  const [xc, yc, w, h] = tf.split(rawBoxes, 4, 1);
+  const y1 = yc.sub(h.div(2)), x1 = xc.sub(w.div(2));
+  const y2 = yc.add(h.div(2)), x2 = xc.add(w.div(2));
+  const boxes = tf.concat([y1, x1, y2, x2], 1);
+  const nmsIdx = await tf.image.nonMaxSuppressionAsync(boxes, maxScores, 10, 0.5, 0.4);
+  const idxArr = nmsIdx.arraySync();
+  const boxArr = boxes.arraySync();
+  const scrArr = maxScores.arraySync();
+  return idxArr
+    .map(i => ({ box: boxArr[i], score: scrArr[i], cls: classIdx[i] }))
+    .filter(d => LUGGAGE_CLASSES.includes(d.cls) && d.score > 0.4);
+}
 
-        render(finalDetections);
+function renderLive(dets) {
+  ctxLive.clearRect(0, 0, canvasLive.width, canvasLive.height);
+  const sx = canvasLive.width  / 640;
+  const sy = canvasLive.height / 640;
+  dets.forEach(d => {
+    let [y1, x1, y2, x2] = d.box;
+    x1 *= sx; x2 *= sx; y1 *= sy; y2 *= sy;
+    const info  = CLASS_INFO[d.cls];
+    const label = `${info.label} (${Math.round(d.score * 100)}%)`;
+    ctxLive.strokeStyle = info.color;
+    ctxLive.lineWidth   = 3;
+    ctxLive.strokeRect(x1, y1, x2 - x1, y2 - y1);
+    ctxLive.font = 'bold 16px sans-serif';
+    const tw = ctxLive.measureText(label).width;
+    ctxLive.fillStyle = info.color;
+    ctxLive.fillRect(x1, y1 > 24 ? y1 - 24 : 0, tw + 10, 22);
+    ctxLive.fillStyle = '#000';
+    ctxLive.fillText(label, x1 + 5, y1 > 24 ? y1 - 6 : 16);
+  });
+}
 
-        tf.engine().endScope();
-        requestAnimationFrame(detectFrame);
-    }
+// ── Capture photo ─────────────────────────────────────────────
+function capturePhoto() {
+  cancelAnimationFrame(animId);
+  video.pause();
 
-    function parseYOLO(res) {
-        // On sépare les coordonnées des boîtes et les scores des 80 classes
-        const rawBoxes = res.slice([0, 0], [-1, 4]);
-        const rawScores = res.slice([0, 4], [-1, 80]);
+  // Copier la frame dans canvasPhoto
+  canvasPhoto.width  = video.videoWidth;
+  canvasPhoto.height = video.videoHeight;
+  ctxPhoto.drawImage(video, 0, 0);
 
-        // On ne garde que le score max par ligne
-        const maxScores = rawScores.max(1);
-        const classIndices = rawScores.argMax(1).dataSync();
+  // Récupérer la meilleure bbox bagage depuis lastDetections
+  bagBox = null;
+  if (lastDetections.length > 0) {
+    const best = lastDetections.reduce((a, b) => b.score > a.score ? b : a);
+    const sx = canvasPhoto.width  / 640;
+    const sy = canvasPhoto.height / 640;
+    let [y1, x1, y2, x2] = best.box;
+    bagBox = { x1: x1*sx, y1: y1*sy, x2: x2*sx, y2: y2*sy, cls: best.cls, score: best.score };
+    drawBagBox();
+  }
 
-        // Conversion [x_center, y_center, w, h] -> [y1, x1, y2, x2] pour le NMS de TFJS
-        const [x_center, y_center, w, h] = tf.split(rawBoxes, 4, 1);
-        const y1 = y_center.sub(h.div(2));
-        const x1 = x_center.sub(w.div(2));
-        const y2 = y_center.add(h.div(2));
-        const x2 = x_center.add(w.div(2));
-        
-        const boxes = tf.concat([y1, x1, y2, x2], 1);
+  // Afficher photo, masquer vidéo+canvas live
+  video.style.display       = 'none';
+  canvasLive.style.display  = 'none';
+  canvasPhoto.style.display = 'block';
 
-        return [boxes, maxScores, classIndices];
-    }
+  // Échelle d'affichage (le canvas est mis à l'échelle par CSS)
+  scale = canvasPhoto.width / canvasPhoto.getBoundingClientRect().width;
 
-    function render(detections) {
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+  document.getElementById('btn-capture').style.display = 'none';
+  document.getElementById('btn-retake').style.display  = 'inline-block';
+  document.getElementById('btn-confirm').style.display = 'inline-block';
 
-        detections.forEach(d => {
-            if (LUGGAGE_CLASSES.includes(d.class)) {
-                let [y1, x1, y2, x2] = d.box;
-                
-                // Redimensionnement aux coordonnées réelles du canvas
-                x1 *= canvas.width / 640;
-                x2 *= canvas.width / 640;
-                y1 *= canvas.height / 640;
-                y2 *= canvas.height / 640;
+  statusDiv.textContent = bagBox
+    ? `${CLASS_INFO[bagBox.cls].label} détecté — entoure maintenant la carte bancaire`
+    : 'Aucun bagage détecté — entoure quand même la carte bancaire';
+  instrDiv.textContent = 'Glisse le doigt pour entourer la carte';
 
-                ctx.strokeStyle = "#FF3FA6";
-                ctx.lineWidth = 4;
-                ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
-                
-                ctx.fillStyle = "#FF3FA6";
-                ctx.font = "bold 20px Arial";
-                ctx.fillText(`Bagage (${Math.round(d.score * 100)}%)`, x1, y1 > 20 ? y1 - 10 : 20);
-            }
-        });
-    }
+  addTouchListeners();
+}
 
-    async function init() {
-        await setupCamera();
-        await loadModel();
-    }
+function drawBagBox() {
+  if (!bagBox) return;
+  const info = CLASS_INFO[bagBox.cls];
+  ctxPhoto.strokeStyle = info.color;
+  ctxPhoto.lineWidth   = 4;
+  ctxPhoto.strokeRect(bagBox.x1, bagBox.y1, bagBox.x2 - bagBox.x1, bagBox.y2 - bagBox.y1);
+  ctxPhoto.font = 'bold 20px sans-serif';
+  const label = `${info.label} (${Math.round(bagBox.score * 100)}%)`;
+  const tw = ctxPhoto.measureText(label).width;
+  ctxPhoto.fillStyle = info.color;
+  ctxPhoto.fillRect(bagBox.x1, bagBox.y1 > 28 ? bagBox.y1 - 28 : 0, tw + 10, 26);
+  ctxPhoto.fillStyle = '#000';
+  ctxPhoto.fillText(label, bagBox.x1 + 5, bagBox.y1 > 28 ? bagBox.y1 - 6 : 20);
+}
 
-    init();
+// ── Sélection carte (touch + mouse) ──────────────────────────
+function getPos(e) {
+  const rect = canvasPhoto.getBoundingClientRect();
+  const src  = e.touches ? e.touches[0] : e;
+  return {
+    x: (src.clientX - rect.left) * scale,
+    y: (src.clientY - rect.top)  * scale
+  };
+}
+
+function addTouchListeners() {
+  ['mousedown','touchstart'].forEach(ev => canvasPhoto.addEventListener(ev, e => {
+    e.preventDefault();
+    const p = getPos(e);
+    startX = p.x; startY = p.y; drawing = true;
+    cardBox = null;
+    document.getElementById('btn-measure').style.display = 'none';
+  }, { passive: false }));
+
+  ['mousemove','touchmove'].forEach(ev => canvasPhoto.addEventListener(ev, e => {
+    e.preventDefault();
+    if (!drawing) return;
+    const p = getPos(e);
+    endX = p.x; endY = p.y;
+    redrawPhoto();
+    ctxPhoto.strokeStyle = '#FFD700';
+    ctxPhoto.lineWidth   = 2;
+    ctxPhoto.setLineDash([6, 3]);
+    ctxPhoto.strokeRect(startX, startY, endX - startX, endY - startY);
+    ctxPhoto.setLineDash([]);
+  }, { passive: false }));
+
+  ['mouseup','touchend'].forEach(ev => canvasPhoto.addEventListener(ev, e => {
+    e.preventDefault();
+    drawing = false;
+    cardBox = {
+      x1: Math.round(Math.min(startX, endX)),
+      y1: Math.round(Math.min(startY, endY)),
+      x2: Math.round(Math.max(startX, endX)),
+      y2: Math.round(Math.max(startY, endY))
+    };
+    redrawPhoto();
+    ctxPhoto.strokeStyle = '#FFD700';
+    ctxPhoto.lineWidth   = 2;
+    ctxPhoto.strokeRect(cardBox.x1, cardBox.y1, cardBox.x2 - cardBox.x1, cardBox.y2 - cardBox.y1);
+    ctxPhoto.font = '14px sans-serif';
+    ctxPhoto.fillStyle = '#FFD700';
+    ctxPhoto.fillText('Carte', cardBox.x1 + 4, cardBox.y1 > 18 ? cardBox.y1 - 4 : 14);
+    instrDiv.textContent = 'Vérifie le cadre jaune sur la carte puis confirme';
+  }, { passive: false }));
+}
+
+function redrawPhoto() {
+  ctxPhoto.clearRect(0, 0, canvasPhoto.width, canvasPhoto.height);
+  ctxPhoto.drawImage(photoImg || video, 0, 0);
+  drawBagBox();
+}
+
+// Stocker l'image capturée pour redessiner
+const _origCapture = capturePhoto;
+(function patchCapture() {
+  const orig = window.capturePhoto;
+  window.capturePhoto = function() {
+    _origCapture();
+    photoImg = new Image();
+    photoImg.src = canvasPhoto.toDataURL();
+  };
+})();
+
+function confirmCard() {
+  if (!cardBox || (cardBox.x2 - cardBox.x1) < 10) {
+    statusDiv.textContent = 'Dessine dabord un rectangle autour de la carte !';
+    return;
+  }
+  document.getElementById('btn-confirm').style.display = 'none';
+  document.getElementById('btn-measure').style.display = 'inline-block';
+  statusDiv.textContent = 'Carte confirmée — clique sur Mesurer !';
+  instrDiv.textContent  = '';
+}
+
+// ── Mesure ────────────────────────────────────────────────────
+function measure() {
+  if (!cardBox) { statusDiv.textContent = 'Sélectionne dabord la carte !'; return; }
+  if (!bagBox)  { statusDiv.textContent = 'Aucun bagage détecté sur cette photo.'; return; }
+
+  const cardWpx = cardBox.x2 - cardBox.x1;
+  const cardHpx = cardBox.y2 - cardBox.y1;
+  const ratio   = ((cardWpx / CARD_W_MM) + (cardHpx / CARD_H_MM)) / 2;
+
+  const bagWcm = ((bagBox.x2 - bagBox.x1) / ratio / 10).toFixed(1);
+  const bagHcm = ((bagBox.y2 - bagBox.y1) / ratio / 10).toFixed(1);
+
+  document.getElementById('res-class').textContent = CLASS_INFO[bagBox.cls].label;
+  document.getElementById('res-dims').textContent  = `${bagWcm} × ${bagHcm}`;
+  document.getElementById('conf').textContent      = `Confiance YOLO : ${Math.round(bagBox.score * 100)}%`;
+  document.getElementById('result').style.display  = 'block';
+
+  statusDiv.textContent = 'Mesure terminée !';
+  instrDiv.textContent  = 'Vérifie avec un mètre et reprends si nécessaire';
+}
+
+// ── Reprendre ─────────────────────────────────────────────────
+function retake() {
+  cardBox = null; bagBox = null; photoImg = null;
+  canvasPhoto.style.display = 'none';
+  canvasLive.style.display  = 'block';
+  video.style.display       = 'block';
+  video.play();
+
+  document.getElementById('btn-capture').style.display = 'inline-block';
+  document.getElementById('btn-retake').style.display  = 'none';
+  document.getElementById('btn-confirm').style.display = 'none';
+  document.getElementById('btn-measure').style.display = 'none';
+  document.getElementById('result').style.display      = 'none';
+
+  statusDiv.textContent = 'Modèle prêt — pointe vers ton bagage';
+  instrDiv.textContent  = 'Place la carte bancaire à côté du bagage puis capture';
+  detectLoop();
+}
+
+// ── Init ──────────────────────────────────────────────────────
+async function init() {
+  await setupCamera();
+  await loadModel();
+}
+init();
 </script>
 </body>
 </html>
