@@ -17,13 +17,6 @@
     video, #canvas-live, #canvas-photo { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
     #canvas-photo { display: none; cursor: crosshair; touch-action: none; }
 
-    /* ── NOUVEAU : canvas WebXR ── */
-    #canvas-xr {
-      position: absolute; top: 0; left: 0;
-      width: 100%; height: 100%;
-      display: none;
-      touch-action: none;
-    }
 
     #btn-bar {
       width: 100%; display: flex; justify-content: center;
@@ -83,8 +76,6 @@
   <video id="video" autoplay muted playsinline></video>
   <canvas id="canvas-live"></canvas>
   <canvas id="canvas-photo"></canvas>
-  <!-- NOUVEAU : canvas dédié à la session WebXR -->
-  <canvas id="canvas-xr"></canvas>
   <!-- NOUVEAU : affichage profondeur live -->
   <div id="depth-overlay">Profondeur : --</div>
 </div>
@@ -111,8 +102,6 @@
 const video       = document.getElementById('video');
 const canvasLive  = document.getElementById('canvas-live');
 const canvasPhoto = document.getElementById('canvas-photo');
-/* NOUVEAU */
-const canvasXR    = document.getElementById('canvas-xr');
 const depthOverlay= document.getElementById('depth-overlay');
 
 const ctxLive     = canvasLive.getContext('2d');
@@ -324,16 +313,18 @@ async function startARMeasure() {
   instrDiv.textContent  = 'Garde le bagage visible à l\'écran';
 
   try {
-    // NOUVEAU : demande de session AR avec depth-sensing obligatoire
+    // dom-overlay : Chrome AR affiche la caméra nativement,
+    // notre body HTML reste visible par-dessus → plus d'écran noir
     xrSession = await navigator.xr.requestSession('immersive-ar', {
-      requiredFeatures: ['depth-sensing', 'local'],
+      requiredFeatures: ['depth-sensing', 'local', 'dom-overlay'],
+      optionalFeatures: [],
+      domOverlay: { root: document.body },
       depthSensing: {
         usagePreference:      ['cpu-optimized'],
         dataFormatPreference: ['luminance-alpha']
       }
     });
   } catch(e) {
-    // depth-sensing non supporté → fallback sans référence
     statusDiv.textContent = 'Depth sensing indisponible : ' + e.message;
     instrDiv.textContent  = 'Mesure dégradée (sans profondeur)';
     document.getElementById('btn-measure').style.display = 'inline-block';
@@ -341,21 +332,29 @@ async function startARMeasure() {
     return;
   }
 
-  // NOUVEAU : configuration du renderer WebXR sur canvas-xr
-  const gl = canvasXR.getContext('webgl', { xrCompatible: true });
-  await xrSession.updateRenderState({ baseLayer: new XRWebGLLayer(xrSession, gl) });
+  // Pas de WebGLLayer : on ne fait que lire la profondeur, pas de rendu 3D
   xrRefSpace = await xrSession.requestReferenceSpace('local');
 
   arMeasureDone = false;
   depthAtBagBox = null;
 
-  // NOUVEAU : boucle de rendu XR — on ne fait qu'une seule mesure
-  xrSession.requestAnimationFrame(onXRFrame);
+  // Si l'utilisateur quitte la session AR manuellement (bouton retour Android),
+  // on restaure toujours l'UI → évite le blocage "Ouverture session AR"
+  xrSession.addEventListener('end', () => {
+    xrSession = null;
+    depthOverlay.style.display = 'none';
+    if (!arMeasureDone) {
+      statusDiv.textContent = 'Session AR quittée — réessaie ou utilise le fallback';
+      instrDiv.textContent  = '';
+      document.getElementById('btn-ar').style.display     = 'inline-block';
+      document.getElementById('btn-measure').style.display= 'inline-block';
+    }
+  });
 
-  canvasPhoto.style.display = 'none';
-  canvasXR.style.display    = 'block';
   depthOverlay.style.display = 'block';
   document.getElementById('btn-ar').style.display = 'none';
+
+  xrSession.requestAnimationFrame(onXRFrame);
 }
 
 /**
@@ -429,8 +428,6 @@ function endARSession() {
     xrSession.end().catch(() => {});
     xrSession = null;
   }
-  canvasXR.style.display    = 'none';
-  canvasPhoto.style.display = 'block';
   depthOverlay.style.display = 'none';
 }
 
@@ -480,7 +477,6 @@ function retake() {
   endARSession(); // NOUVEAU : assure la fermeture propre de toute session XR
 
   canvasPhoto.style.display = 'none';
-  canvasXR.style.display    = 'none';          // NOUVEAU
   canvasLive.style.display  = 'block';
   video.style.display       = 'block';
   video.play();
