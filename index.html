@@ -11,7 +11,7 @@
 
     h2 { font-size: 18px; font-weight: 500; padding: 14px 0 4px; }
 
-    #status { color: #FF3FA6; font-weight: bold; font-size: 13px; padding-bottom: 8px; min-height: 20px; text-align: center; padding: 0 16px 8px; }
+    #status { color: #ff3fa5; font-weight: bold; font-size: 13px; padding-bottom: 8px; min-height: 20px; text-align: center; padding: 0 16px 8px; }
 
     #container { position: relative; width: 100vw; flex: 1; }
     video, #canvas-live, #canvas-photo { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
@@ -29,9 +29,8 @@
       border: none; border-radius: 8px; cursor: pointer;
     }
     #btn-capture  { background: #4CAF50; color: white; }
-    #btn-retake   { background: #888; color: white; display: none; }
-    #btn-confirm  { background: #2196F3; color: white; display: none; }
-    #btn-measure  { background: #FF9800; color: white; display: none; }
+    #btn-retake   { background: #888; color: white; }
+    #btn-measure  { background: #FF9800; color: white; }
 
     #result {
       width: 100%; background: rgba(255,255,255,0.08);
@@ -48,6 +47,30 @@
       font-size: 12px; color: #ccc; text-align: center;
       padding: 4px 16px 0; min-height: 18px;
     }
+    /* légende des couleurs en bas de l'écran */
+    #legend {
+      display: flex;
+      gap: 16px;
+      padding: 6px 16px;
+      font-size: 12px;
+      color: #ccc;
+    }
+    .legend-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      display: inline-block;
+      margin-right: 5px;
+      vertical-align: middle;
+    }
+    /* Message de vérification cabine */
+    #cabin-check {
+      padding: 6px 12px;
+      border-radius: 8px;
+      display: inline-block;
+      margin-top: 6px;
+      font-weight: bold;
+    }
   </style>
 </head>
 <body>
@@ -61,18 +84,27 @@
   <canvas id="canvas-live"></canvas>
   <canvas id="canvas-photo"></canvas>
 </div>
-
+<div id="legend">
+  <span>
+    <span class="legend-dot" style="background: #00E5FF;" ></span>
+    Objet à mesurer
+  </span>
+  <span>
+    <span class="legend-dot" style="background: #FF3FA6;"></span>
+    Référence (ballon ⚽)
+  </span>
+</div>
 <div id="btn-bar">
-  <button id="btn-capture"  onclick="capturePhoto()">Capturer</button>
-  <button id="btn-retake"   onclick="retake()">Reprendre</button>
-  <button id="btn-confirm"  onclick="confirmCard()">Confirmer la carte</button>
-  <button id="btn-measure"  onclick="measure()">Mesurer</button>
+  <button id="btn-capture"  onclick="capturePhoto()">📸 Capturer</button>
+  <button id="btn-retake"   onclick="retake()"  style="display:none">🔄 Reprendre</button>
+  <button id="btn-measure"  onclick="measure()"  style="display:none">📏 Mesurer</button>
 </div>
 
 <div id="result">
   <h3 id="res-class"></h3>
   <div class="dim-row" id="res-dims"></div>
   <div class="dim-label">largeur × hauteur (cm)</div>
+  <div id="cabin-check" style="font-size:18px; margin-top:8px;"></div>
   <div id="conf"></div>
 </div>
 
@@ -85,27 +117,35 @@ const ctxPhoto    = canvasPhoto.getContext('2d');
 const statusDiv   = document.getElementById('status');
 const instrDiv    = document.getElementById('instr');
 
-const TARGET_CLASSES = [24, 26, 28, 32];
+// ── Classes détectées par YOLO ────────────────────────────────
+// Ces nombres correspondent aux IDs des classes dans le modèle COCO
+// 24 = sac à dos, 28 = valise, 32 = ballon de sport
+const TARGET_CLASSES = [24, 28, 32]; // j'ai enleve 26 sac a main
+
+// Pour chaque classe : son nom affiché et sa couleur
+// CYAN  (#00E5FF) = objets à mesurer
+// ROSE  (#FF3FA6) = objet de référence (le ballon)
 const CLASS_INFO = {
-  24: { label: 'Sac à dos',    color: '#FF3FA6' },
-  26: { label: 'Sac à main',   color: '#00E5FF' },
-  28: { label: 'Valise',       color: '#00FF99' },
-  32: { label: 'Ballon de foot', color: '#FFD700' }
+  24: { label: 'Sac à dos',    color: '#00E5FF' },
+  28: { label: 'Valise',       color: '#00E5FF' },
+  32: { label: 'Ballon de foot', color: '#FF3FA6' }
 };
-const CARD_W_MM = 85.6;
-const CARD_H_MM = 54.0;
+
+// ── Mesure de référence ───────────────────────────────────────
+// Un ballon de foot taille 5 fait exactement 220mm de diamètre
 const BALL_D_MM = 220.0; // diamètre standard d'un ballon de foot
 
-let model, animId;
-let lastDetections = [];
-let photoImg = null;
-let cardBox  = null;
-let bagBox   = null;
-let ballBox  = null;
-let detectionBoxes = [];
-let drawing  = false;
-let startX, startY, endX, endY;
-let scale = 1;
+// ── Dimensions max pour la cabine (règle générale compagnies) ─
+const CABIN_MAX_W_CM = 55;
+const CABIN_MAX_H_CM = 35;
+
+// ── État de l'application ─────────────────────────────────────
+let model, animId; // le modèle YOLO et l'ID de la boucle d'animation
+let lastDetections = []; // dernières détections en temps réel
+let photoImg = null; // l'image figée après capture
+let bagBox   = null; // rectangle de la valise/sac détecté
+let ballBox  = null; // rectangle du ballon détecté
+let detectionBoxes = []; // tous les rectangles détectés
 
 // ── Caméra ────────────────────────────────────────────────────
 async function setupCamera() {
@@ -168,238 +208,229 @@ async function parseYOLO(res) {
   const scrArr = maxScores.arraySync();
   return idxArr
     .map(i => ({ box: boxArr[i], score: scrArr[i], cls: classIdx[i] }))
-    .filter(d => TARGET_CLASSES.includes(d.cls) && d.score > 0.4);
+    .filter(d => TARGET_CLASSES.includes(d.cls) && d.score > 0.5);
 }
 
 function renderLive(dets) {
   ctxLive.clearRect(0, 0, canvasLive.width, canvasLive.height);
   const sx = canvasLive.width  / 640;
   const sy = canvasLive.height / 640;
+  
+  // Vérifie si on a les deux objets nécessaires pour mesurer
+  const hasBall = dets.some(d => d.cls === 32);
+  const hasBag  = dets.some(d => [24, 28].includes(d.cls));
   dets.forEach(d => {
     let [y1, x1, y2, x2] = d.box;
     x1 *= sx; x2 *= sx; y1 *= sy; y2 *= sy;
     const info  = CLASS_INFO[d.cls];
     const label = `${info.label} (${Math.round(d.score * 100)}%)`;
+    
+    // Dessine le rectangle
     ctxLive.strokeStyle = info.color;
     ctxLive.lineWidth   = 3;
     ctxLive.strokeRect(x1, y1, x2 - x1, y2 - y1);
-    ctxLive.font = 'bold 16px sans-serif';
+
+    // Dessine le fond du label
+    ctxLive.font = 'bold 15px sans-serif';
     const tw = ctxLive.measureText(label).width;
     ctxLive.fillStyle = info.color;
-    ctxLive.fillRect(x1, y1 > 24 ? y1 - 24 : 0, tw + 10, 22);
+    ctxLive.fillRect(x1, y1 > 22 ? y1 - 22 : 0, tw + 10, 20);
+
+    // Écrit le texte en noir sur le fond coloré
     ctxLive.fillStyle = '#000';
     ctxLive.fillText(label, x1 + 5, y1 > 24 ? y1 - 6 : 16);
   });
+
+  // Message en temps réel selon ce qui est détecté
+  if (hasBall && hasBag){
+    statusDiv.textContent = '✅ Ballon + bagage détectés — capture !';
+    statusDiv.style.color = '#00FF99';
+  } else if (hasBall) {
+    statusDiv.textContent = '⚽ Ballon détecté — place une valise ou un sac';
+    statusDiv.style.color = '#FF3FA6';
+  } else if (hasBag) {
+    statusDiv.textContent = '🧳 Bagage détecté — place un ballon taille 5';
+    statusDiv.style.color = '#00E5FF';
+  } else{
+      statusDiv.textContent = 'Pointe vers ton bagage et un ballon ⚽';
+      statusDiv.style.color = '#888';
+  }
 }
 
 // ── Capture photo ─────────────────────────────────────────────
 function capturePhoto() {
+  // 1. Arrête la boucle de détection et fige la vidéo
   cancelAnimationFrame(animId);
   video.pause();
 
-  // Copier la frame dans canvasPhoto
+  // 2. Copie l'image de la vidéo dans le canvas photo
   canvasPhoto.width  = video.videoWidth;
   canvasPhoto.height = video.videoHeight;
   ctxPhoto.drawImage(video, 0, 0);
 
-  // Récupérer les meilleures bboxes depuis lastDetections
+  // 3. Sauvegarde l'image pour pouvoir la redessiner plus tard
+  photoImg = new Image();
+  photoImg.src = canvasPhoto.toDataURL();
+
+  // 4. Remet à zéro les détections précédentes
   bagBox = null;
   ballBox = null;
   detectionBoxes = [];
+
+  // 5. Convertit les détections temps réel en coordonnées photo
   if (lastDetections.length > 0) {
     const sx = canvasPhoto.width  / 640;
     const sy = canvasPhoto.height / 640;
+
     detectionBoxes = lastDetections.map(d => {
       let [y1, x1, y2, x2] = d.box;
-      return { x1: x1 * sx, y1: y1 * sy, x2: x2 * sx, y2: y2 * sy, cls: d.cls, score: d.score };
+      return { x1: x1 * sx, y1: y1 * sy, 
+        x2: x2 * sx, y2: y2 * sy, 
+        cls: d.cls, 
+        score: d.score };
     });
 
-    const luggageDetections = detectionBoxes.filter(d => [24, 26, 28].includes(d.cls));
-    const ballDetections = detectionBoxes.filter(d => d.cls === 32);
-
-    if (luggageDetections.length > 0) {
-      bagBox = luggageDetections.reduce((a, b) => b.score > a.score ? b : a);
+    // 6. Cherche le meilleur ballon détecté
+    const ballDets = detectionBoxes.filter(d => d.cls === 32);
+    if (ballDets.length > 0) {
+      // .reduce() garde celui avec le score le plus élevé
+      ballBox = ballDets.reduce((a, b) => b.score > a.score ? b : a); // à quoi sert le point d'interrogation ?
     }
-    if (ballDetections.length > 0) {
-      ballBox = ballDetections.reduce((a, b) => b.score > a.score ? b : a);
+    // 7. Cherche le meilleur bagage détecté (valise ou sac à dos)
+    const bagDets = detectionBoxes.filter(d=> [24,28].includes(d.cls));
+    if(bagDets.length > 0) {
+      bagBox = bagDets.reduce((a, b) => b.score > a.score ? b : a);
     }
 
+    // 8. Dessine tous les rectangles sur la photo figée
     drawDetections();
   }
 
-  // Afficher photo, masquer vidéo+canvas live
+  // 9. Bascule l'affichage : cache la vidéo, montre la photo
   video.style.display       = 'none';
   canvasLive.style.display  = 'none';
   canvasPhoto.style.display = 'block';
 
-  // Échelle d'affichage (le canvas est mis à l'échelle par CSS)
-  scale = canvasPhoto.width / canvasPhoto.getBoundingClientRect().width;
-
+  // 10. Met à jour les boutons
   document.getElementById('btn-capture').style.display = 'none';
-  document.getElementById('btn-retake').style.display  = 'inline-block';
-  document.getElementById('btn-confirm').style.display = 'inline-block';
-  document.getElementById('btn-measure').style.display = ballBox ? 'inline-block' : 'none';
+  document.getElementById('btn-retake').style.display = 'inline-block';
+  document.getElementById('btn-measure').style.display = (ballBox && bagBox) ? 'inline-block' : 'none';
 
+  // 11. Affiche un message selon ce qui a été détecté
   if (bagBox && ballBox) {
-    statusDiv.textContent = `${CLASS_INFO[bagBox.cls].label} et ${CLASS_INFO[ballBox.cls].label} détectés — entoure la carte ou mesure directement avec le ballon`;
-  } else if (bagBox) {
-    statusDiv.textContent = `${CLASS_INFO[bagBox.cls].label} détecté — entoure la carte bancaire`;
-  } else if (ballBox) {
-    statusDiv.textContent = `${CLASS_INFO[ballBox.cls].label} détecté — mesure la valise avec le ballon de foot comme référence`;
+    statusDiv.textContent = `✅ ${CLASS_INFO[bagBox.cls].label} + ballon détectés — appuie sur Mesurer !`;
+    statusDiv.style.color = '#00FF99';
+  } else if (!ballBox) {
+    statusDiv.textContent = '❌ Pas de ballon détecté — reprends avec un ballon taille 5';
+    statusDiv.style.color = '#FF3FA6';
   } else {
     statusDiv.textContent = 'Aucun objet détecté — entoure quand même la carte bancaire';
+    statusDiv.style.color = '#FF3FA6';
   }
-  instrDiv.textContent = 'Glisse le doigt pour entourer la carte';
-
-  addTouchListeners();
 }
 
 function drawDetections() {
   detectionBoxes.forEach(d => {
     const info = CLASS_INFO[d.cls];
+
+    // Rectangle coloré
     ctxPhoto.strokeStyle = info.color;
-    ctxPhoto.lineWidth   = 4;
+    ctxPhoto.lineWidth = d.cls === 32 ? 5 : 3 ; // ballon = trait plus épais
     ctxPhoto.strokeRect(d.x1, d.y1, d.x2 - d.x1, d.y2 - d.y1);
-    ctxPhoto.font = 'bold 20px sans-serif';
+
+    // Label avec fond coloré
     const label = `${info.label} (${Math.round(d.score * 100)}%)`;
+    ctxPhoto.font = 'bold 18px sans-serif';
     const tw = ctxPhoto.measureText(label).width;
     ctxPhoto.fillStyle = info.color;
-    ctxPhoto.fillRect(d.x1, d.y1 > 28 ? d.y1 - 28 : 0, tw + 10, 26);
+    ctxPhoto.fillRect(d.x1, d.y1 > 26 ? d.y1 - 26 : 0, tw + 10, 24);
     ctxPhoto.fillStyle = '#000';
-    ctxPhoto.fillText(label, d.x1 + 5, d.y1 > 28 ? d.y1 - 6 : 20);
+    ctxPhoto.fillText(label, d.x1 + 5, d.y1 > 26 ? d.y1 - 5 : 19);
+
+    // Petite icône de référence sur le ballon
+    if(d.cls === 32) {
+      ctxPhoto.font = '22px sans-serif';
+      ctxPhoto.fillText('📐', d.x1 + 4, d.y2 - 6);
+    }
   });
-}
-
-// ── Sélection carte (touch + mouse) ──────────────────────────
-function getPos(e) {
-  const rect = canvasPhoto.getBoundingClientRect();
-  const src  = e.touches ? e.touches[0] : e;
-  return {
-    x: (src.clientX - rect.left) * scale,
-    y: (src.clientY - rect.top)  * scale
-  };
-}
-
-function addTouchListeners() {
-  ['mousedown','touchstart'].forEach(ev => canvasPhoto.addEventListener(ev, e => {
-    e.preventDefault();
-    const p = getPos(e);
-    startX = p.x; startY = p.y; drawing = true;
-    cardBox = null;
-    document.getElementById('btn-measure').style.display = 'none';
-  }, { passive: false }));
-
-  ['mousemove','touchmove'].forEach(ev => canvasPhoto.addEventListener(ev, e => {
-    e.preventDefault();
-    if (!drawing) return;
-    const p = getPos(e);
-    endX = p.x; endY = p.y;
-    redrawPhoto();
-    ctxPhoto.strokeStyle = '#FFD700';
-    ctxPhoto.lineWidth   = 2;
-    ctxPhoto.setLineDash([6, 3]);
-    ctxPhoto.strokeRect(startX, startY, endX - startX, endY - startY);
-    ctxPhoto.setLineDash([]);
-  }, { passive: false }));
-
-  ['mouseup','touchend'].forEach(ev => canvasPhoto.addEventListener(ev, e => {
-    e.preventDefault();
-    drawing = false;
-    cardBox = {
-      x1: Math.round(Math.min(startX, endX)),
-      y1: Math.round(Math.min(startY, endY)),
-      x2: Math.round(Math.max(startX, endX)),
-      y2: Math.round(Math.max(startY, endY))
-    };
-    redrawPhoto();
-    ctxPhoto.strokeStyle = '#FFD700';
-    ctxPhoto.lineWidth   = 2;
-    ctxPhoto.strokeRect(cardBox.x1, cardBox.y1, cardBox.x2 - cardBox.x1, cardBox.y2 - cardBox.y1);
-    ctxPhoto.font = '14px sans-serif';
-    ctxPhoto.fillStyle = '#FFD700';
-    ctxPhoto.fillText('Carte', cardBox.x1 + 4, cardBox.y1 > 18 ? cardBox.y1 - 4 : 14);
-    instrDiv.textContent = 'Vérifie le cadre jaune sur la carte puis confirme';
-  }, { passive: false }));
-}
-
-function redrawPhoto() {
-  ctxPhoto.clearRect(0, 0, canvasPhoto.width, canvasPhoto.height);
-  ctxPhoto.drawImage(photoImg || video, 0, 0);
-  drawDetections();
-}
-
-// Stocker l'image capturée pour redessiner
-const _origCapture = capturePhoto;
-(function patchCapture() {
-  const orig = window.capturePhoto;
-  window.capturePhoto = function() {
-    _origCapture();
-    photoImg = new Image();
-    photoImg.src = canvasPhoto.toDataURL();
-  };
-})();
-
-function confirmCard() {
-  if (!cardBox || (cardBox.x2 - cardBox.x1) < 10) {
-    statusDiv.textContent = 'Dessine dabord un rectangle autour de la carte !';
-    return;
-  }
-  document.getElementById('btn-confirm').style.display = 'none';
-  document.getElementById('btn-measure').style.display = 'inline-block';
-  statusDiv.textContent = 'Carte confirmée — clique sur Mesurer !';
-  instrDiv.textContent  = '';
 }
 
 // ── Mesure ────────────────────────────────────────────────────
 function measure() {
-  if (!bagBox)  { statusDiv.textContent = 'Aucun bagage détecté sur cette photo.'; return; }
-
-  let ratio;
-  let referenceText;
-  if (cardBox) {
-    const cardWpx = cardBox.x2 - cardBox.x1;
-    const cardHpx = cardBox.y2 - cardBox.y1;
-    ratio = ((cardWpx / CARD_W_MM) + (cardHpx / CARD_H_MM)) / 2;
-    referenceText = 'Carte bancaire';
-  } else if (ballBox) {
-    const ballWpx = ballBox.x2 - ballBox.x1;
-    const ballHpx = ballBox.y2 - ballBox.y1;
-    ratio = ((ballWpx / BALL_D_MM) + (ballHpx / BALL_D_MM)) / 2;
-    referenceText = 'Ballon de foot';
-  } else {
-    statusDiv.textContent = 'Sélectionne dabord la carte ou assure-toi qu’un ballon est détecté !';
-    return;
+  // Vérifications de sécurité
+  if(!ballBox) {
+    statusDiv.textContent = '❌ Pas de ballon de référence détecté !';
+    return; // "return" stoppe la fonction ici si la condition est vraie
+  }
+  if (!bagBox)  { 
+    statusDiv.textContent = '❌ Pas de bagage détecté !';
+    return; 
   }
 
-  const bagWcm = ((bagBox.x2 - bagBox.x1) / ratio / 10).toFixed(1);
-  const bagHcm = ((bagBox.y2 - bagBox.y1) / ratio / 10).toFixed(1);
-  const extraInfo = `Confiance YOLO : ${Math.round(bagBox.score * 100)}% — référence : ${referenceText}${!cardBox && ballBox ? ' (ballon ~22cm)' : ''}`;
+  // ── Calcul du ratio pixels/mm ────────────────────────────────
+  // Le ballon fait 220mm. Combien de pixels occupe-t-il sur la photo ?
+  const ballWpx = ballBox.x2 - ballBox.x1; // largeur en pixels
+  const ballHpx = ballBox.y2 - ballBox.y1; // hauteur en pixels
 
+  // Moyenne largeur+hauteur pour plus de précision
+  // (le ballon devrait être un cercle, donc les deux sont proches)
+  const ratio = ((ballWpx / BALL_D_MM) + (ballHpx / BALL_D_MM)) / 2; // ratio = pixels par mm
+
+  // ── Calcul des dimensions du bagage ─────────────────────────
+  const bagWpx = bagBox.x2 - bagBox.x1; // largeur du bagage en pixels
+  const bagHpx = bagBox.y2 - bagBox.y1; // hauteur du bagage en pixels
+
+  // pixels ÷ ratio = mm, puis ÷ 10 = cm
+  const bagWcm = (bagWpx / ratio / 10).toFixed(1); // .toFixed(1) = 1 décimale)
+  const bagHcm = (bagHpx / ratio / 10).toFixed(1);
+
+  // ── Vérification cabine ──────────────────────────────────────
+  const fitsCabin = bagWcm <= CABIN_MAX_W_CM && bagHcm <= CABIN_MAX_H_CM;
+  const cabinDiv = document.getElementById('cabin-check');
+
+  if (fitsCabin) {
+    cabinDiv.textContent = '✅ Accepté comme bagage cabine';
+    cabinDiv.style.background = 'rgba(0,255,100,0.15)';
+    cabinDiv.style.color = '#00FF99';
+  } else {
+    cabinDiv.textContent        = '❌ Trop grand pour la cabine';
+    cabinDiv.style.background   = 'rgba(255,60,60,0.15)';
+    cabinDiv.style.color        = '#FF5555';
+  }
+
+  // ── Affichage du résultat ────────────────────────────────────
   document.getElementById('res-class').textContent = CLASS_INFO[bagBox.cls].label;
   document.getElementById('res-dims').textContent  = `${bagWcm} × ${bagHcm}`;
-  document.getElementById('conf').textContent      = extraInfo;
+  document.getElementById('conf').textContent      = `Confiance YOLO : ${Math.round(bagBox.score * 100)}% — référence ballon ⚽ (22cm)`;
   document.getElementById('result').style.display  = 'block';
 
-  statusDiv.textContent = 'Mesure terminée !';
-  instrDiv.textContent  = 'Vérifie avec un mètre et reprends si nécessaire';
+  statusDiv.textContent = '📏 Mesure terminée !';
+  statusDiv.style.color = '#00FF99';
 }
 
 // ── Reprendre ─────────────────────────────────────────────────
 function retake() {
-  cardBox = null; bagBox = null; ballBox = null; photoImg = null; detectionBoxes = [];
+  // Remet tout à zéro
+  bagBox = null; ballBox = null; photoImg = null; detectionBoxes = [];
+
+  // Reaffiche la vidéo, cache la photo
   canvasPhoto.style.display = 'none';
   canvasLive.style.display  = 'block';
   video.style.display       = 'block';
   video.play();
 
+  // Remet les boutons dans leur état initial
   document.getElementById('btn-capture').style.display = 'inline-block';
   document.getElementById('btn-retake').style.display  = 'none';
-  document.getElementById('btn-confirm').style.display = 'none';
   document.getElementById('btn-measure').style.display = 'none';
   document.getElementById('result').style.display      = 'none';
+  document.getElementById('cabin-check').textContent = '';
 
-  statusDiv.textContent = 'Modèle prêt — pointe vers ton bagage';
-  instrDiv.textContent  = 'Place la carte bancaire à côté du bagage puis capture';
+  // Remet les messages
+  statusDiv.textContent = 'Pointe vers ton bagage et un ballon ⚽';
+  statusDiv.style.color = '#888';
+
+  // Relance la boucle de détection
   detectLoop();
 }
 
