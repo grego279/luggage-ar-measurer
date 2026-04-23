@@ -1,0 +1,589 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mesure Bagage</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #13002F; color: white; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
+
+    h2 { font-size: 18px; font-weight: 500; padding: 14px 0 4px; }
+
+    #status { color: #ff3fa5; font-weight: bold; font-size: 13px; padding-bottom: 8px; min-height: 20px; text-align: center; padding: 0 16px 8px; }
+
+    #container { position: relative; width: 100vw; flex: 1; }
+    video, #canvas-live, #canvas-photo { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
+    #canvas-photo { display: none; cursor: crosshair; touch-action: none; }
+
+    #btn-bar {
+      width: 100%; display: flex; justify-content: center;
+      gap: 10px; padding: 12px 16px;
+      background: rgba(19,0,47,0.95);
+      flex-wrap: wrap;
+    }
+
+    button {
+      padding: 10px 18px; font-size: 14px; font-weight: 500;
+      border: none; border-radius: 8px; cursor: pointer;
+    }
+    #btn-capture  { background: #4CAF50; color: white; }
+    #btn-retake   { background: #888; color: white; }
+    #btn-measure  { background: #FF9800; color: white; }
+    #btn-debug    { background: #9C27B0; color: white; }
+    #btn-test-boxes { background: #2196F3; color: white; }
+
+    #result {
+      width: 100%; background: rgba(255,255,255,0.08);
+      border-top: 1px solid rgba(255,255,255,0.15);
+      padding: 14px 20px; display: none;
+      text-align: center;
+    }
+    #result h3 { font-size: 16px; margin-bottom: 8px; color: #FF3FA6; }
+    .dim-row { font-size: 22px; font-weight: 500; margin: 4px 0; }
+    .dim-label { font-size: 12px; color: #aaa; margin-bottom: 10px; }
+    #conf { font-size: 12px; color: #888; }
+
+    #instr {
+      font-size: 12px; color: #ccc; text-align: center;
+      padding: 4px 16px 0; min-height: 18px;
+    }
+    #legend {
+      display: flex;
+      gap: 16px;
+      padding: 6px 16px;
+      font-size: 12px;
+      color: #ccc;
+    }
+    .legend-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      display: inline-block;
+      margin-right: 5px;
+      vertical-align: middle;
+    }
+    #cabin-check {
+      padding: 6px 12px;
+      border-radius: 8px;
+      display: inline-block;
+      margin-top: 6px;
+      font-weight: bold;
+    }
+
+    /* ── Debug panel ─────────────────────────────────────────── */
+    #debug-panel {
+      display: none;
+      width: 100%;
+      background: rgba(0,0,0,0.85);
+      border-top: 1px solid #444;
+      padding: 10px 14px;
+      font-size: 11px;
+      font-family: monospace;
+      color: #0f0;
+      max-height: 220px;
+      overflow-y: auto;
+    }
+    #debug-panel.visible { display: block; }
+    .debug-line { margin: 2px 0; }
+    .debug-warn  { color: #FFD600; }
+    .debug-error { color: #FF5555; }
+    .debug-ok    { color: #00FF99; }
+    .debug-info  { color: #00E5FF; }
+  </style>
+</head>
+<body>
+
+<h2>Mesure Bagage</h2>
+<div id="status">Chargement du modèle...</div>
+<div id="instr"></div>
+
+<div id="container" style="height: 55vh;">
+  <video id="video" autoplay muted playsinline></video>
+  <canvas id="canvas-live"></canvas>
+  <canvas id="canvas-photo"></canvas>
+</div>
+<div id="legend">
+  <span><span class="legend-dot" style="background:#00E5FF;"></span>Objet à mesurer</span>
+  <span><span class="legend-dot" style="background:#FF3FA6;"></span>Référence (ballon ⚽)</span>
+</div>
+<div id="btn-bar">
+  <button id="btn-capture"    onclick="capturePhoto()">📸 Capturer</button>
+  <button id="btn-retake"     onclick="retake()"          style="display:none">🔄 Reprendre</button>
+  <button id="btn-measure"    onclick="measure()"         style="display:none">📏 Mesurer</button>
+  <button id="btn-test-boxes" onclick="drawTestBoxes()"   style="display:none">🟦 Tester boîtes</button>
+  <button id="btn-debug"      onclick="toggleDebug()">🐛 Debug</button>
+</div>
+
+<div id="result">
+  <h3 id="res-class"></h3>
+  <div class="dim-row" id="res-dims"></div>
+  <div class="dim-label">largeur × hauteur (cm)</div>
+  <div id="cabin-check" style="font-size:18px; margin-top:8px;"></div>
+  <div id="conf"></div>
+</div>
+
+<!-- ── Debug panel ──────────────────────────────────────── -->
+<div id="debug-panel"></div>
+
+<script>
+// ── Utilitaire de log debug ───────────────────────────────────
+const debugLines = [];
+function dlog(msg, cls = '') {
+  console.log(msg);
+  debugLines.push(`<div class="debug-line ${cls}">${msg}</div>`);
+  const panel = document.getElementById('debug-panel');
+  if (panel.classList.contains('visible')) {
+    panel.innerHTML = debugLines.join('');
+    panel.scrollTop = panel.scrollHeight;
+  }
+}
+function toggleDebug() {
+  const panel = document.getElementById('debug-panel');
+  panel.classList.toggle('visible');
+  if (panel.classList.contains('visible')) {
+    panel.innerHTML = debugLines.join('');
+    panel.scrollTop = panel.scrollHeight;
+  }
+}
+
+// ── Constantes ────────────────────────────────────────────────
+const TARGET_CLASSES = [24, 28, 32, 72];
+const CLASS_INFO = {
+  24: { label: 'Sac à dos',      color: '#00E5FF' },
+  28: { label: 'Valise',         color: '#00E5FF' },
+  32: { label: 'Ballon de foot', color: '#FF3FA6' },
+  72: { label: 'Valise',         color: '#00E5FF' }  // frigo = alias valise
+};
+const BALL_D_MM   = 220.0;
+const CABIN_MAX_W_CM = 55;
+const CABIN_MAX_H_CM = 35;
+
+// ── État ──────────────────────────────────────────────────────
+let model, animId;
+let lastDetections = [];
+let photoImg = null;
+let bagBox   = null;
+let ballBox  = null;
+let detectionBoxes = [];
+
+const video       = document.getElementById('video');
+const canvasLive  = document.getElementById('canvas-live');
+const canvasPhoto = document.getElementById('canvas-photo');
+const ctxLive     = canvasLive.getContext('2d');
+const ctxPhoto    = canvasPhoto.getContext('2d');
+const statusDiv   = document.getElementById('status');
+const instrDiv    = document.getElementById('instr');
+
+// ── Caméra ────────────────────────────────────────────────────
+async function setupCamera() {
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+    audio: false
+  });
+  video.srcObject = stream;
+  return new Promise(r => video.onloadedmetadata = r);
+}
+
+// ── Chargement du modèle ──────────────────────────────────────
+async function loadModel() {
+  try {
+    dlog('⏳ Chargement modèle depuis ./model/model.json ...', 'debug-info');
+    model = await tf.loadGraphModel('./model/model.json');
+    dlog('✅ Modèle chargé !', 'debug-ok');
+
+    // Affiche la signature du modèle pour vérifier les entrées/sorties
+    dlog(`📐 Inputs  : ${JSON.stringify(model.inputs  ? model.inputs.map(i=>({name:i.name,shape:i.shape}))  : 'n/a')}`, 'debug-info');
+    dlog(`📐 Outputs : ${JSON.stringify(model.outputs ? model.outputs.map(o=>({name:o.name,shape:o.shape})) : 'n/a')}`, 'debug-info');
+
+    statusDiv.textContent = 'Modèle prêt — pointe vers ton bagage';
+    instrDiv.textContent  = 'Place le ballon ⚽ à côté du bagage puis capture';
+    detectLoop();
+  } catch(e) {
+    dlog('❌ Erreur chargement : ' + e, 'debug-error');
+    statusDiv.textContent = 'Erreur chargement modèle : ' + e;
+  }
+}
+
+// ── Parsing YOLO avec détection automatique du format ─────────
+async function parseYOLO(rawOutput) {
+  /*
+   * YOLOv8 TF.js peut sortir différentes formes selon l'export :
+   *   A) [1, 84, 8400]  → il faut transposer → [1, 8400, 84]
+   *   B) [1, 8400, 84]  → déjà correct, pas de transposition
+   *
+   * Les 84 colonnes = 4 coords (cx,cy,w,h) + 80 scores de classes
+   */
+  let tensor = rawOutput;
+
+  // Si c'est un tableau, prendre le premier élément
+  if (Array.isArray(tensor)) {
+    dlog(`⚠️ La sortie est un Array de ${tensor.length} éléments, utilisation de [0]`, 'debug-warn');
+    tensor = tensor[0];
+  }
+  // Si c'est un objet (dict), prendre la première clé
+  if (!(tensor instanceof tf.Tensor)) {
+    const keys = Object.keys(tensor);
+    dlog(`⚠️ La sortie est un objet, clés: ${keys.join(', ')}`, 'debug-warn');
+    tensor = tensor[keys[0]];
+  }
+
+  const shape = tensor.shape; // ex: [1, 84, 8400] ou [1, 8400, 84]
+  dlog(`🔍 Forme brute sortie : [${shape}]`, 'debug-info');
+
+  let res;
+  // Détection automatique du format
+  if (shape.length === 3 && shape[1] === 84) {
+    // Format A : [1, 84, 8400] → transposer
+    dlog('📊 Format A détecté [1,84,8400] → transposition', 'debug-info');
+    res = tensor.transpose([0, 2, 1]).squeeze(); // → [8400, 84]
+  } else if (shape.length === 3 && shape[2] === 84) {
+    // Format B : [1, 8400, 84] → pas de transposition
+    dlog('📊 Format B détecté [1,8400,84] → squeeze direct', 'debug-info');
+    res = tensor.squeeze(); // → [8400, 84]
+  } else {
+    // Format inconnu, tentative générique
+    dlog(`⚠️ Format inconnu [${shape}], tentative avec transpose+squeeze`, 'debug-warn');
+    try {
+      res = tensor.transpose([0, 2, 1]).squeeze();
+    } catch {
+      res = tensor.squeeze();
+    }
+    dlog(`   Forme après traitement : [${res.shape}]`, 'debug-warn');
+  }
+
+  const rawBoxes  = res.slice([0, 0], [-1, 4]);   // cx, cy, w, h
+  const rawScores = res.slice([0, 4], [-1, 80]);   // 80 classes COCO
+
+  const maxScores = rawScores.max(1);
+  const classIdx  = rawScores.argMax(1).dataSync();
+
+  // ── DEBUG : top 5 scores toutes classes confondues ────────
+  const allScores = await maxScores.data();
+  const top5 = Array.from(allScores)
+    .map((s, i) => ({ s, i }))
+    .sort((a, b) => b.s - a.s)
+    .slice(0, 5);
+  dlog(`🏆 Top 5 scores bruts : ${top5.map(x => `[${x.i}] cls=${classIdx[x.i]} s=${x.s.toFixed(3)}`).join(' | ')}`, 'debug-info');
+
+  // ── DEBUG : scores des classes qui nous intéressent ───────
+  const targetScores = Array.from(allScores)
+    .map((s, i) => ({ s, cls: classIdx[i] }))
+    .filter(x => TARGET_CLASSES.includes(x.cls));
+  const bestTargets = targetScores.sort((a, b) => b.s - a.s).slice(0, 3);
+  if (bestTargets.length > 0) {
+    dlog(`🎯 Meilleurs scores classes cibles (24,28,32) : ${bestTargets.map(x=>`cls=${x.cls} s=${x.s.toFixed(3)}`).join(' | ')}`, 'debug-ok');
+  } else {
+    dlog('⚠️ Aucune détection pour les classes 24/28/32 au-dessus de 0', 'debug-warn');
+  }
+
+  // ── Conversion des boîtes cx,cy,w,h → y1,x1,y2,x2 ────────
+  const [xc, yc, w, h] = tf.split(rawBoxes, 4, 1);
+  const y1 = yc.sub(h.div(2)), x1 = xc.sub(w.div(2));
+  const y2 = yc.add(h.div(2)), x2 = xc.add(w.div(2));
+  const boxes = tf.concat([y1, x1, y2, x2], 1);
+
+  // ── NMS avec seuil adaptatif ──────────────────────────────
+  // On essaie d'abord 0.4 puis 0.2 si rien n'est trouvé
+  let nmsIdx = await tf.image.nonMaxSuppressionAsync(boxes, maxScores, 10, 0.5, 0.4);
+  let idxArr = nmsIdx.arraySync();
+  const boxArr = boxes.arraySync();
+  const scrArr = allScores;
+
+  let dets = idxArr
+    .map(i => ({ box: boxArr[i], score: scrArr[i], cls: classIdx[i] }))
+    .filter(d => TARGET_CLASSES.includes(d.cls) && d.score > 0.4);
+
+  dlog(`🔎 Après NMS (seuil 0.4) : ${dets.length} détection(s) classes cibles`, dets.length > 0 ? 'debug-ok' : 'debug-warn');
+
+  // Si rien trouvé, on réessaie avec un seuil plus bas
+  if (dets.length === 0) {
+    dlog('↘️ Aucune détection — réessai seuil 0.2', 'debug-warn');
+    nmsIdx = await tf.image.nonMaxSuppressionAsync(boxes, maxScores, 10, 0.5, 0.2);
+    idxArr = nmsIdx.arraySync();
+    dets = idxArr
+      .map(i => ({ box: boxArr[i], score: scrArr[i], cls: classIdx[i] }))
+      .filter(d => TARGET_CLASSES.includes(d.cls) && d.score > 0.2);
+    dlog(`🔎 Après NMS (seuil 0.2) : ${dets.length} détection(s)`, dets.length > 0 ? 'debug-ok' : 'debug-warn');
+  }
+
+  return dets;
+}
+
+// ── Inférence sur une image (utilisée après capture) ─────────
+async function runInferenceOnPhoto() {
+  if (!model) { dlog('❌ Modèle non chargé', 'debug-error'); return []; }
+  dlog('🖼️ Inférence sur la photo figée...', 'debug-info');
+
+  return tf.tidy(() => {}) || await (async () => {
+    tf.engine().startScope();
+    try {
+      const img     = tf.browser.fromPixels(canvasPhoto);
+      const resized = tf.image.resizeBilinear(img, [640, 640]);
+      const input   = resized.div(255.0).expandDims(0);
+      dlog(`   Input tensor shape : [${input.shape}]`, 'debug-info');
+      const output = model.execute(input);
+      dlog(`   Output type : ${Array.isArray(output) ? 'Array' : output instanceof tf.Tensor ? 'Tensor' : typeof output}`, 'debug-info');
+      const dets = await parseYOLO(output);
+      return dets;
+    } catch(e) {
+      dlog('❌ Erreur inférence photo : ' + e, 'debug-error');
+      return [];
+    } finally {
+      tf.engine().endScope();
+    }
+  })();
+}
+
+// ── Détection en temps réel ───────────────────────────────────
+function detectLoop() {
+  canvasLive.width  = video.videoWidth  || 640;
+  canvasLive.height = video.videoHeight || 480;
+
+  async function frame() {
+    if (!model || video.paused || video.ended) { animId = requestAnimationFrame(frame); return; }
+    tf.engine().startScope();
+    try {
+      const img     = tf.browser.fromPixels(video);
+      const resized = tf.image.resizeBilinear(img, [640, 640]);
+      const input   = resized.div(255.0).expandDims(0);
+      const output  = model.execute(input);
+      const dets    = await parseYOLO(output);
+      lastDetections = dets;
+      renderLive(dets);
+    } catch(e) { /* silencieux en boucle */ }
+    tf.engine().endScope();
+    animId = requestAnimationFrame(frame);
+  }
+  animId = requestAnimationFrame(frame);
+}
+
+function renderLive(dets) {
+  ctxLive.clearRect(0, 0, canvasLive.width, canvasLive.height);
+  const sx = canvasLive.width  / 640;
+  const sy = canvasLive.height / 640;
+  const hasBall = dets.some(d => d.cls === 32);
+  const hasBag  = dets.some(d => [24, 28, 72].includes(d.cls));
+  dets.forEach(d => {
+    let [y1, x1, y2, x2] = d.box;
+    x1 *= sx; x2 *= sx; y1 *= sy; y2 *= sy;
+    const info  = CLASS_INFO[d.cls];
+    const label = `${info.label} (${Math.round(d.score * 100)}%)`;
+    ctxLive.strokeStyle = info.color;
+    ctxLive.lineWidth   = 3;
+    ctxLive.strokeRect(x1, y1, x2 - x1, y2 - y1);
+    ctxLive.font = 'bold 15px sans-serif';
+    const tw = ctxLive.measureText(label).width;
+    ctxLive.fillStyle = info.color;
+    ctxLive.fillRect(x1, y1 > 22 ? y1 - 22 : 0, tw + 10, 20);
+    ctxLive.fillStyle = '#000';
+    ctxLive.fillText(label, x1 + 5, y1 > 24 ? y1 - 6 : 16);
+  });
+  if (hasBall && hasBag) {
+    statusDiv.textContent = '✅ Ballon + bagage détectés — capture !';
+    statusDiv.style.color = '#00FF99';
+  } else if (hasBall) {
+    statusDiv.textContent = '⚽ Ballon détecté — place une valise ou un sac';
+    statusDiv.style.color = '#FF3FA6';
+  } else if (hasBag) {
+    statusDiv.textContent = '🧳 Bagage détecté — place un ballon taille 5';
+    statusDiv.style.color = '#00E5FF';
+  } else {
+    statusDiv.textContent = 'Pointe vers ton bagage et un ballon ⚽';
+    statusDiv.style.color = '#888';
+  }
+}
+
+// ── TEST : dessine des rectangles factices pour vérifier le canvas ──
+function drawTestBoxes() {
+  dlog('🟦 Dessin des boîtes de test sur la photo...', 'debug-info');
+  if (!photoImg) { dlog('⚠️ Aucune photo capturée', 'debug-warn'); return; }
+
+  // Redessine la photo propre
+  ctxPhoto.drawImage(photoImg, 0, 0);
+
+  const W = canvasPhoto.width;
+  const H = canvasPhoto.height;
+
+  // Boîte 1 : ballon fictif (rose) — centre-gauche
+  const ballX = W * 0.1, ballY = H * 0.3, ballS = Math.min(W, H) * 0.18;
+  ctxPhoto.strokeStyle = '#FF3FA6';
+  ctxPhoto.lineWidth   = 5;
+  ctxPhoto.strokeRect(ballX, ballY, ballS, ballS);
+  ctxPhoto.font = 'bold 16px sans-serif';
+  ctxPhoto.fillStyle = '#FF3FA6';
+  ctxPhoto.fillRect(ballX, ballY - 24, 200, 22);
+  ctxPhoto.fillStyle = '#000';
+  ctxPhoto.fillText('⚽ BALLON TEST (99%)', ballX + 4, ballY - 6);
+  ctxPhoto.font = '20px sans-serif';
+  ctxPhoto.fillText('📐', ballX + 4, ballY + ballS - 6);
+
+  // Boîte 2 : bagage fictif (cyan) — centre
+  const bagX = W * 0.38, bagY = H * 0.2, bagW = W * 0.45, bagH = H * 0.6;
+  ctxPhoto.strokeStyle = '#00E5FF';
+  ctxPhoto.lineWidth   = 3;
+  ctxPhoto.strokeRect(bagX, bagY, bagW, bagH);
+  ctxPhoto.font = 'bold 16px sans-serif';
+  ctxPhoto.fillStyle = '#00E5FF';
+  ctxPhoto.fillRect(bagX, bagY - 24, 210, 22);
+  ctxPhoto.fillStyle = '#000';
+  ctxPhoto.fillText('🧳 SAC À DOS TEST (85%)', bagX + 4, bagY - 6);
+
+  statusDiv.textContent = '🟦 Boîtes TEST affichées — le canvas fonctionne !';
+  statusDiv.style.color = '#00FF99';
+  dlog('✅ Boîtes test dessinées sur la photo', 'debug-ok');
+}
+
+// ── Capture photo ─────────────────────────────────────────────
+async function capturePhoto() {
+  cancelAnimationFrame(animId);
+  video.pause();
+
+  canvasPhoto.width  = video.videoWidth;
+  canvasPhoto.height = video.videoHeight;
+  ctxPhoto.drawImage(video, 0, 0);
+
+  photoImg = new Image();
+  photoImg.src = canvasPhoto.toDataURL();
+
+  dlog(`📸 Photo capturée — dimensions : ${canvasPhoto.width}×${canvasPhoto.height}`, 'debug-info');
+
+  bagBox = null; ballBox = null; detectionBoxes = [];
+
+  // ── Ré-inférence sur la photo figée ──────────────────────
+  statusDiv.textContent = '🔍 Inférence en cours sur la photo...';
+  statusDiv.style.color = '#FFD600';
+
+  const dets = await runInferenceOnPhoto();
+
+  if (dets.length > 0) {
+    const sx = canvasPhoto.width  / 640;
+    const sy = canvasPhoto.height / 640;
+    detectionBoxes = dets.map(d => {
+      let [y1, x1, y2, x2] = d.box;
+      return { x1: x1*sx, y1: y1*sy, x2: x2*sx, y2: y2*sy, cls: d.cls, score: d.score };
+    });
+    const ballDets = detectionBoxes.filter(d => d.cls === 32);
+    if (ballDets.length) ballBox = ballDets.reduce((a,b) => b.score>a.score?b:a);
+    const bagDets  = detectionBoxes.filter(d => [24,28,72].includes(d.cls));
+    if (bagDets.length)  bagBox  = bagDets.reduce((a,b)  => b.score>a.score?b:a);
+    drawDetections();
+    dlog(`✅ ${dets.length} détection(s) affichées sur la photo`, 'debug-ok');
+  } else {
+    // Aucune détection YOLO — on fallback sur les détections temps réel
+    dlog('⚠️ Inférence photo : 0 détection — fallback sur détections temps réel', 'debug-warn');
+    if (lastDetections.length > 0) {
+      const sx = canvasPhoto.width  / 640;
+      const sy = canvasPhoto.height / 640;
+      detectionBoxes = lastDetections.map(d => {
+        let [y1, x1, y2, x2] = d.box;
+        return { x1: x1*sx, y1: y1*sy, x2: x2*sx, y2: y2*sy, cls: d.cls, score: d.score };
+      });
+      const ballDets = detectionBoxes.filter(d => d.cls === 32);
+      if (ballDets.length) ballBox = ballDets.reduce((a,b) => b.score>a.score?b:a);
+      const bagDets  = detectionBoxes.filter(d => [24,28,72].includes(d.cls));
+      if (bagDets.length)  bagBox  = bagDets.reduce((a,b)  => b.score>a.score?b:a);
+      drawDetections();
+    }
+  }
+
+  video.style.display       = 'none';
+  canvasLive.style.display  = 'none';
+  canvasPhoto.style.display = 'block';
+
+  document.getElementById('btn-capture').style.display   = 'none';
+  document.getElementById('btn-retake').style.display    = 'inline-block';
+  document.getElementById('btn-measure').style.display   = (ballBox && bagBox) ? 'inline-block' : 'none';
+  document.getElementById('btn-test-boxes').style.display = 'inline-block';
+
+  if (bagBox && ballBox) {
+    statusDiv.textContent = `✅ ${CLASS_INFO[bagBox.cls].label} + ballon détectés — appuie sur Mesurer !`;
+    statusDiv.style.color = '#00FF99';
+  } else if (!ballBox && !bagBox) {
+    statusDiv.textContent = '❌ Rien détecté — utilise "Tester boîtes" pour vérifier le canvas';
+    statusDiv.style.color = '#FF3FA6';
+  } else if (!ballBox) {
+    statusDiv.textContent = '❌ Ballon non détecté — reprends avec un ballon taille 5';
+    statusDiv.style.color = '#FF3FA6';
+  } else {
+    statusDiv.textContent = '❌ Bagage non détecté — reprends';
+    statusDiv.style.color = '#FF3FA6';
+  }
+}
+
+function drawDetections() {
+  detectionBoxes.forEach(d => {
+    const info = CLASS_INFO[d.cls];
+    ctxPhoto.strokeStyle = info.color;
+    ctxPhoto.lineWidth = d.cls === 32 ? 5 : 3;
+    ctxPhoto.strokeRect(d.x1, d.y1, d.x2 - d.x1, d.y2 - d.y1);
+    const label = `${info.label} (${Math.round(d.score * 100)}%)`;
+    ctxPhoto.font = 'bold 18px sans-serif';
+    const tw = ctxPhoto.measureText(label).width;
+    ctxPhoto.fillStyle = info.color;
+    ctxPhoto.fillRect(d.x1, d.y1 > 26 ? d.y1 - 26 : 0, tw + 10, 24);
+    ctxPhoto.fillStyle = '#000';
+    ctxPhoto.fillText(label, d.x1 + 5, d.y1 > 26 ? d.y1 - 5 : 19);
+    if (d.cls === 32) {
+      ctxPhoto.font = '22px sans-serif';
+      ctxPhoto.fillText('📐', d.x1 + 4, d.y2 - 6);
+    }
+  });
+}
+
+// ── Mesure ────────────────────────────────────────────────────
+function measure() {
+  if (!ballBox) { statusDiv.textContent = '❌ Pas de ballon de référence !'; return; }
+  if (!bagBox)  { statusDiv.textContent = '❌ Pas de bagage détecté !';      return; }
+  const ballWpx = ballBox.x2 - ballBox.x1;
+  const ballHpx = ballBox.y2 - ballBox.y1;
+  const ratio   = ((ballWpx / BALL_D_MM) + (ballHpx / BALL_D_MM)) / 2;
+  const bagWcm  = (((bagBox.x2 - bagBox.x1) / ratio) / 10).toFixed(1);
+  const bagHcm  = (((bagBox.y2 - bagBox.y1) / ratio) / 10).toFixed(1);
+  const fitsCabin = bagWcm <= CABIN_MAX_W_CM && bagHcm <= CABIN_MAX_H_CM;
+  const cabinDiv  = document.getElementById('cabin-check');
+  if (fitsCabin) {
+    cabinDiv.textContent = '✅ Accepté comme bagage cabine';
+    cabinDiv.style.background = 'rgba(0,255,100,0.15)';
+    cabinDiv.style.color = '#00FF99';
+  } else {
+    cabinDiv.textContent      = '❌ Trop grand pour la cabine';
+    cabinDiv.style.background = 'rgba(255,60,60,0.15)';
+    cabinDiv.style.color      = '#FF5555';
+  }
+  document.getElementById('res-class').textContent = CLASS_INFO[bagBox.cls].label;
+  document.getElementById('res-dims').textContent  = `${bagWcm} × ${bagHcm}`;
+  document.getElementById('conf').textContent      = `Confiance YOLO : ${Math.round(bagBox.score * 100)}% — référence ballon ⚽ (22cm)`;
+  document.getElementById('result').style.display  = 'block';
+  statusDiv.textContent = '📏 Mesure terminée !';
+  statusDiv.style.color = '#00FF99';
+}
+
+// ── Reprendre ─────────────────────────────────────────────────
+function retake() {
+  bagBox = null; ballBox = null; photoImg = null; detectionBoxes = [];
+  canvasPhoto.style.display = 'none';
+  canvasLive.style.display  = 'block';
+  video.style.display       = 'block';
+  video.play();
+  document.getElementById('btn-capture').style.display   = 'inline-block';
+  document.getElementById('btn-retake').style.display    = 'none';
+  document.getElementById('btn-measure').style.display   = 'none';
+  document.getElementById('btn-test-boxes').style.display = 'none';
+  document.getElementById('result').style.display        = 'none';
+  document.getElementById('cabin-check').textContent     = '';
+  statusDiv.textContent = 'Pointe vers ton bagage et un ballon ⚽';
+  statusDiv.style.color = '#888';
+  detectLoop();
+}
+
+// ── Init ──────────────────────────────────────────────────────
+async function init() {
+  await setupCamera();
+  await loadModel();
+}
+init();
+</script>
+</body>
+</html>
