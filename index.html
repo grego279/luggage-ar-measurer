@@ -139,7 +139,7 @@ async function loadModel() {
     // COCO-SSD : une seule ligne pour tout charger — pas de fichiers locaux !
     model = await cocoSsd.load();
     statusDiv.textContent = 'Modèle coco prêt — pointe vers ton bagage';
-    instrDiv.textContent  = 'Place le ballon ⚽ à côté du bagage puis capture';
+    instrDiv.textContent  = 'Place le ballon ⚽ à côté du bagage puis capture _ coco seuil 10%';
     detectLoop();
   } catch(e) {
     statusDiv.textContent = 'Erreur chargement modèle : ' + e;
