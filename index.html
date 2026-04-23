@@ -3,50 +3,34 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Mesure Bagage - MediaPipe Edition</title>
-
+  <title>Mesure Bagage - MediaPipe Debug</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0"></script>
 
   <style>
-    /* Ta charte graphique exactement */
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { background: #13002F; color: white; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
     h2 { font-size: 18px; font-weight: 500; padding: 14px 0 4px; }
     #status { color: #ff3fa5; font-weight: bold; font-size: 13px; min-height: 20px; text-align: center; padding: 0 16px 8px; }
-    #container { position: relative; width: 100vw; flex: 1; }
+    #container { position: relative; width: 100vw; flex: 1; background: #000; }
     video, #canvas-live, #canvas-photo { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
     #canvas-photo { display: none; }
-    #btn-bar { width: 100%; display: flex; justify-content: center; gap: 10px; padding: 12px 16px; background: rgba(19,0,47,0.95); flex-wrap: wrap; }
-    button { padding: 10px 18px; font-size: 14px; font-weight: 500; border: none; border-radius: 8px; cursor: pointer; }
+    #btn-bar { width: 100%; display: flex; justify-content: center; gap: 10px; padding: 12px 16px; background: rgba(19,0,47,0.95); }
+    button { padding: 10px 18px; border: none; border-radius: 8px; cursor: pointer; font-weight: 500; }
     #btn-capture { background: #4CAF50; color: white; }
-    #btn-retake  { background: #888;    color: white; }
+    #btn-retake  { background: #888; color: white; }
     #btn-measure { background: #FF9800; color: white; }
-    #result { width: 100%; background: rgba(255,255,255,0.08); border-top: 1px solid rgba(255,255,255,0.15); padding: 14px 20px; display: none; text-align: center; }
-    #result h3 { font-size: 16px; margin-bottom: 8px; color: #FF3FA6; }
-    .dim-row { font-size: 22px; font-weight: 500; margin: 4px 0; }
-    .dim-label { font-size: 12px; color: #aaa; margin-bottom: 10px; }
-    #conf { font-size: 12px; color: #888; }
-    #instr { font-size: 12px; color: #ccc; text-align: center; padding: 4px 16px 0; min-height: 18px; }
-    #legend { display: flex; gap: 16px; padding: 6px 16px; font-size: 12px; color: #ccc; }
-    .legend-dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; margin-right: 5px; vertical-align: middle; }
-    #cabin-check { padding: 6px 12px; border-radius: 8px; display: inline-block; margin-top: 6px; font-weight: bold; }
+    #result { width: 100%; background: rgba(255,255,255,0.08); padding: 14px 20px; display: none; text-align: center; }
   </style>
 </head>
 <body>
 
 <h2>Mesure Bagage (MediaPipe 10%)</h2>
-<div id="status">Chargement de l'IA...</div>
-<div id="instr"></div>
+<div id="status">Initialisation caméra...</div>
 
 <div id="container" style="height: 60vh;">
   <video id="video" autoplay muted playsinline></video>
   <canvas id="canvas-live"></canvas>
   <canvas id="canvas-photo"></canvas>
-</div>
-
-<div id="legend">
-  <span><span class="legend-dot" style="background:#00E5FF"></span>Objet à mesurer</span>
-  <span><span class="legend-dot" style="background:#FF3FA6"></span>Référence (ballon ⚽)</span>
 </div>
 
 <div id="btn-bar">
@@ -56,224 +40,151 @@
 </div>
 
 <div id="result">
-  <h3 id="res-class"></h3>
-  <div class="dim-row" id="res-dims"></div>
-  <div class="dim-label">largeur × hauteur (cm)</div>
-  <div id="cabin-check" style="font-size:18px; margin-top:8px;"></div>
-  <div id="conf"></div>
+  <h3 id="res-class" style="color:#FF3FA6"></h3>
+  <div id="res-dims" style="font-size: 24px; font-weight: bold; margin: 5px 0;"></div>
+  <div id="cabin-check" style="font-weight: bold; margin-top: 10px; padding: 8px; border-radius: 5px;"></div>
 </div>
 
 <script>
-const { ObjectDetector, FilesetResolver } = tasksVision;
+// On attend que la page soit prête
+window.onload = async () => {
+    const video = document.getElementById('video');
+    const canvasLive = document.getElementById('canvas-live');
+    const canvasPhoto = document.getElementById('canvas-photo');
+    const ctxLive = canvasLive.getContext('2d');
+    const ctxPhoto = canvasPhoto.getContext('2d');
+    const statusDiv = document.getElementById('status');
 
-const video = document.getElementById('video');
-const canvasLive = document.getElementById('canvas-live');
-const canvasPhoto = document.getElementById('canvas-photo');
-const ctxLive = canvasLive.getContext('2d');
-const ctxPhoto = canvasPhoto.getContext('2d');
-const statusDiv = document.getElementById('status');
-const instrDiv = document.getElementById('instr');
+    const BALL_D_MM = 220.0;
+    const BAG_CLASSES = ['backpack', 'suitcase', 'refrigerator'];
+    const BALL_CLASS = 'sports ball';
 
-// Tes classes et constantes
-const BAG_CLASSES = ['backpack', 'suitcase', 'refrigerator'];
-const BALL_CLASS = 'sports ball';
-const CLASS_INFO = {
-  'backpack':     { label: 'Sac à dos',      color: '#00E5FF' },
-  'suitcase':     { label: 'Valise',          color: '#00E5FF' },
-  'refrigerator': { label: 'Réfrigérateur',  color: '#00E5FF' },
-  'sports ball':  { label: 'Ballon ⚽',       color: '#FF3FA6' },
-};
+    let objectDetector;
+    let lastDetections = [];
+    let ballBox = null;
+    let bagBox = null;
 
-const BALL_D_MM = 220.0;
-const CABIN_MAX_W_CM = 55;
-const CABIN_MAX_H_CM = 35;
-
-let objectDetector = null;
-let animId = null;
-let lastDetections = [];
-let ballBox = null;
-let bagBox = null;
-let detectionBoxes = [];
-
-// ── Caméra (Inchangé) ──────────────────────────────────────────
-async function setupCamera() {
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
-      audio: false
-    });
-    video.srcObject = stream;
-    return new Promise(r => video.onloadedmetadata = r);
-  } catch (e) {
-    statusDiv.textContent = "Erreur Caméra : " + e.message;
-  }
-}
-
-// ── Modèle MediaPipe (Nouveau) ─────────────────────────────────
-async function loadModel() {
-  try {
-    const vision = await FilesetResolver.forVisionTasks(
-      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm"
-    );
-    objectDetector = await ObjectDetector.createFromOptions(vision, {
-      baseOptions: {
-        modelAssetPath: `https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float16/1/efficientdet_lite0.tflite`,
-        delegate: "GPU"
-      },
-      scoreThreshold: 0.1, // Ton seuil de 10%
-      runningMode: "VIDEO"
-    });
-    statusDiv.textContent = 'Modèle MediaPipe prêt (Seuil 10%)';
-    instrDiv.textContent = 'Pointe vers ton bagage et ton ballon ⚽';
-    detectLoop();
-  } catch (e) {
-    statusDiv.textContent = 'Erreur MediaPipe : ' + e;
-  }
-}
-
-// ── Détection (Adapté MediaPipe) ───────────────────────────────
-function detectLoop() {
-  // Ajustement canvas
-  canvasLive.width = video.videoWidth || 640;
-  canvasLive.height = video.videoHeight || 480;
-
-  async function frame() {
-    if (!objectDetector || video.paused || video.ended) {
-      animId = requestAnimationFrame(frame);
-      return;
-    }
-    
+    // 1. Démarrer la caméra TOUT DE SUITE
     try {
-      const startTimeMs = performance.now();
-      const detections = await objectDetector.detectForVideo(video, startTimeMs);
+        const stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: 'environment', width: 1280, height: 720 }
+        });
+        video.srcObject = stream;
+        console.log("Caméra active");
+    } catch (err) {
+        statusDiv.textContent = "Erreur caméra : " + err.message;
+        console.error(err);
+        return;
+    }
 
-      // On formate comme ton ancien code pour ne rien casser
-      const dets = detections.detections.map(d => ({
-        class: d.categories[0].categoryName,
-        score: d.categories[0].score,
-        // MediaPipe donne [x, y, w, h]
-        bbox: [d.boundingBox.originX, d.boundingBox.originY, d.boundingBox.width, d.boundingBox.height]
-      })).filter(p => (BAG_CLASSES.includes(p.class) || p.class === BALL_CLASS));
+    // 2. Charger MediaPipe une fois la caméra lancée
+    try {
+        statusDiv.textContent = "Chargement de l'IA...";
+        const vision = await mediapipe.tasksVision.FilesetResolver.forVisionTasks(
+            "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm"
+        );
+        objectDetector = await mediapipe.tasksVision.ObjectDetector.createFromOptions(vision, {
+            baseOptions: {
+                modelAssetPath: `https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float16/1/efficientdet_lite0.tflite`,
+                delegate: "GPU"
+            },
+            scoreThreshold: 0.1,
+            runningMode: "VIDEO"
+        });
+        statusDiv.textContent = "IA Prête (Seuil 10%)";
+        console.log("Modèle chargé");
+        
+        // Ajuster le canvas à la vidéo
+        video.onloadedmetadata = () => {
+            canvasLive.width = video.videoWidth;
+            canvasLive.height = video.videoHeight;
+        };
+        
+        detectLoop();
+    } catch (err) {
+        statusDiv.textContent = "Erreur IA : " + err;
+        console.error(err);
+    }
 
-      lastDetections = dets;
-      renderLive(dets);
-    } catch (e) {}
+    async function detectLoop() {
+        if (!objectDetector || video.paused) return;
 
-    animId = requestAnimationFrame(frame);
-  }
-  animId = requestAnimationFrame(frame);
-}
+        const detections = await objectDetector.detectForVideo(video, performance.now());
+        
+        lastDetections = detections.detections.map(d => ({
+            class: d.categories[0].categoryName,
+            score: d.categories[0].score,
+            bbox: [d.boundingBox.originX, d.boundingBox.originY, d.boundingBox.width, d.boundingBox.height]
+        })).filter(d => BAG_CLASSES.includes(d.class) || d.class === BALL_CLASS);
 
-// ── Rendu Live (Adapté ratios) ────────────────────────────────
-function renderLive(dets) {
-  ctxLive.clearRect(0, 0, canvasLive.width, canvasLive.height);
-  
-  // Ratios pour s'assurer que le dessin suit le canvas
-  const sx = canvasLive.width / video.videoWidth;
-  const sy = canvasLive.height / video.videoHeight;
+        renderLive();
+        requestAnimationFrame(detectLoop);
+    }
 
-  dets.forEach(d => {
-    const [x, y, w, h] = d.bbox;
-    const info = CLASS_INFO[d.class];
-    const label = `${info.label} ${Math.round(d.score * 100)}%`;
+    function renderLive() {
+        ctxLive.clearRect(0, 0, canvasLive.width, canvasLive.height);
+        lastDetections.forEach(d => {
+            const [x, y, w, h] = d.bbox;
+            ctxLive.strokeStyle = (d.class === BALL_CLASS) ? '#FF3FA6' : '#00E5FF';
+            ctxLive.lineWidth = 4;
+            ctxLive.strokeRect(x, y, w, h);
+        });
+        
+        const hasBall = lastDetections.some(d => d.class === BALL_CLASS);
+        const hasBag = lastDetections.some(d => BAG_CLASSES.includes(d.class));
+        statusDiv.textContent = (hasBall && hasBag) ? "✅ Prêt pour capture" : "Cherche ⚽ et 🧳...";
+    }
 
-    ctxLive.strokeStyle = info.color;
-    ctxLive.lineWidth = 4;
-    ctxLive.strokeRect(x * sx, y * sy, w * sx, h * sy);
+    // Fonctions globales attachées à window pour les boutons onclick
+    window.capturePhoto = () => {
+        video.pause();
+        canvasPhoto.width = video.videoWidth;
+        canvasPhoto.height = video.videoHeight;
+        ctxPhoto.drawImage(video, 0, 0);
 
-    ctxLive.fillStyle = info.color;
-    ctxLive.font = 'bold 15px sans-serif';
-    ctxLive.fillText(label, x * sx, (y * sy) > 10 ? (y * sy) - 10 : 20);
-  });
+        ballBox = lastDetections.find(d => d.class === BALL_CLASS);
+        bagBox = lastDetections.sort((a,b) => b.score - a.score).find(d => BAG_CLASSES.includes(d.class));
 
-  // Tes messages de status
-  const hasBall = dets.some(d => d.class === BALL_CLASS);
-  const hasBag = dets.some(d => BAG_CLASSES.includes(d.class));
-  if (hasBall && hasBag) {
-    statusDiv.textContent = '✅ Prêt pour la capture !';
-    statusDiv.style.color = '#00FF99';
-  } else {
-    statusDiv.textContent = 'Recherche : ' + (hasBall ? 'Bagage 🧳' : (hasBag ? 'Ballon ⚽' : 'Tout ⚽+🧳'));
-    statusDiv.style.color = '#ff3fa5';
-  }
-}
+        lastDetections.forEach(d => {
+            const [x, y, w, h] = d.bbox;
+            ctxPhoto.strokeStyle = (d.class === BALL_CLASS) ? '#FF3FA6' : '#00E5FF';
+            ctxPhoto.lineWidth = 5;
+            ctxPhoto.strokeRect(x, y, w, h);
+        });
 
-// ── Capture (Ta logique reprise) ──────────────────────────────
-function capturePhoto() {
-  cancelAnimationFrame(animId);
-  video.pause();
+        canvasLive.style.display = 'none';
+        canvasPhoto.style.display = 'block';
+        document.getElementById('btn-capture').style.display = 'none';
+        document.getElementById('btn-retake').style.display = 'inline-block';
+        if (ballBox && bagBox) document.getElementById('btn-measure').style.display = 'inline-block';
+    };
 
-  canvasPhoto.width = video.videoWidth;
-  canvasPhoto.height = video.videoHeight;
-  ctxPhoto.drawImage(video, 0, 0);
+    window.measure = () => {
+        const ballRatio = ((ballBox.bbox[2] / BALL_D_MM) + (ballBox.bbox[3] / BALL_D_MM)) / 2;
+        const wCm = (bagBox.bbox[2] / ballRatio / 10).toFixed(1);
+        const hCm = (bagBox.bbox[3] / ballRatio / 10).toFixed(1);
 
-  detectionBoxes = lastDetections.map(d => {
-    const [x, y, w, h] = d.bbox;
-    return { x1: x, y1: y, x2: x + w, y2: y + h, cls: d.class, score: d.score };
-  });
+        document.getElementById('res-class').textContent = bagBox.class.toUpperCase();
+        document.getElementById('res-dims').textContent = `${wCm} cm × ${hCm} cm`;
+        
+        const fits = wCm <= 55 && hCm <= 35;
+        const cabin = document.getElementById('cabin-check');
+        cabin.textContent = fits ? "✅ FORMAT CABINE OK" : "❌ TROP GRAND";
+        cabin.style.background = fits ? "rgba(0,255,100,0.2)" : "rgba(255,0,0,0.2)";
+        document.getElementById('result').style.display = 'block';
+    };
 
-  ballBox = detectionBoxes.find(d => d.cls === BALL_CLASS);
-  bagBox = detectionBoxes.sort((a,b) => b.score - a.score).find(d => BAG_CLASSES.includes(d.cls));
-
-  drawDetections();
-
-  video.style.display = 'none';
-  canvasLive.style.display = 'none';
-  canvasPhoto.style.display = 'block';
-  document.getElementById('btn-capture').style.display = 'none';
-  document.getElementById('btn-retake').style.display = 'inline-block';
-  document.getElementById('btn-measure').style.display = (ballBox && bagBox) ? 'inline-block' : 'none';
-}
-
-function drawDetections() {
-  detectionBoxes.forEach(d => {
-    const info = CLASS_INFO[d.cls];
-    ctxPhoto.strokeStyle = info.color;
-    ctxPhoto.lineWidth = 5;
-    ctxPhoto.strokeRect(d.x1, d.y1, d.x2 - d.x1, d.y2 - d.y1);
-    ctxPhoto.fillStyle = info.color;
-    ctxPhoto.font = 'bold 20px sans-serif';
-    ctxPhoto.fillText(info.label, d.x1, d.y1 > 10 ? d.y1 - 10 : 20);
-  });
-}
-
-// ── Ta logique de mesure intacte ──────────────────────────────
-function measure() {
-  const ballWpx = ballBox.x2 - ballBox.x1;
-  const ballHpx = ballBox.y2 - ballBox.y1;
-  const ratio = ((ballWpx / BALL_D_MM) + (ballHpx / BALL_D_MM)) / 2;
-
-  const bagWcm = ((bagBox.x2 - bagBox.x1) / ratio / 10).toFixed(1);
-  const bagHcm = ((bagBox.y2 - bagBox.y1) / ratio / 10).toFixed(1);
-
-  const fitsCabin = bagWcm <= CABIN_MAX_W_CM && bagHcm <= CABIN_MAX_H_CM;
-  const cabinDiv = document.getElementById('cabin-check');
-
-  cabinDiv.textContent = fitsCabin ? '✅ Bagage Cabine OK' : '❌ Trop Grand';
-  cabinDiv.style.color = fitsCabin ? '#00FF99' : '#FF5555';
-
-  document.getElementById('res-class').textContent = CLASS_INFO[bagBox.cls].label;
-  document.getElementById('res-dims').textContent = `${bagWcm} × ${bagHcm}`;
-  document.getElementById('result').style.display = 'block';
-}
-
-function retake() {
-  video.style.display = 'block';
-  canvasLive.style.display = 'block';
-  canvasPhoto.style.display = 'none';
-  document.getElementById('btn-capture').style.display = 'inline-block';
-  document.getElementById('btn-retake').style.display = 'none';
-  document.getElementById('btn-measure').style.display = 'none';
-  document.getElementById('result').style.display = 'none';
-  video.play();
-  detectLoop();
-}
-
-async function init() {
-  await setupCamera();
-  await loadModel();
-}
-init();
+    window.retake = () => {
+        document.getElementById('result').style.display = 'none';
+        document.getElementById('btn-measure').style.display = 'none';
+        document.getElementById('btn-retake').style.display = 'none';
+        document.getElementById('btn-capture').style.display = 'inline-block';
+        canvasPhoto.style.display = 'none';
+        canvasLive.style.display = 'block';
+        video.play();
+        detectLoop();
+    };
+};
 </script>
 </body>
 </html>
