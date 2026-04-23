@@ -284,28 +284,23 @@ async function parseYOLO(rawOutput) {
   const y2 = yc.add(h.div(2)), x2 = xc.add(w.div(2));
   const boxes = tf.concat([y1, x1, y2, x2], 1);
 
-  // ── NMS avec seuil adaptatif ──────────────────────────────
-  // On essaie d'abord 0.4 puis 0.2 si rien n'est trouvé
-  let nmsIdx = await tf.image.nonMaxSuppressionAsync(boxes, maxScores, 10, 0.5, 0.4);
+  // ── NMS avec seuil 0.05 ──────────────────────────────────
+  
+  let nmsIdx = await tf.image.nonMaxSuppressionAsync(boxes, maxScores, 10, 0.5, 0.05);
   let idxArr = nmsIdx.arraySync();
   const boxArr = boxes.arraySync();
   const scrArr = allScores;
 
   let dets = idxArr
     .map(i => ({ box: boxArr[i], score: scrArr[i], cls: classIdx[i] }))
-    .filter(d => TARGET_CLASSES.includes(d.cls) && d.score > 0.4);
+    .filter(d => TARGET_CLASSES.includes(d.cls) && d.score > 0.05);
 
-  dlog(`🔎 Après NMS (seuil 0.4) : ${dets.length} détection(s) classes cibles`, dets.length > 0 ? 'debug-ok' : 'debug-warn');
+  dlog(`🔎 Après NMS (seuil 0.05) : ${dets.length} détection(s) classes cibles`, dets.length > 0 ? 'debug-ok' : 'debug-warn');
 
-  // Si rien trouvé, on réessaie avec un seuil plus bas
   if (dets.length === 0) {
-    dlog('↘️ Aucune détection — réessai seuil 0.2', 'debug-warn');
-    nmsIdx = await tf.image.nonMaxSuppressionAsync(boxes, maxScores, 10, 0.5, 0.2);
     idxArr = nmsIdx.arraySync();
     dets = idxArr
       .map(i => ({ box: boxArr[i], score: scrArr[i], cls: classIdx[i] }))
-      .filter(d => TARGET_CLASSES.includes(d.cls) && d.score > 0.2);
-    dlog(`🔎 Après NMS (seuil 0.2) : ${dets.length} détection(s)`, dets.length > 0 ? 'debug-ok' : 'debug-warn');
   }
 
   return dets;
