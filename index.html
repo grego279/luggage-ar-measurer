@@ -3,60 +3,50 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Mesure Bagage AR - MediaPipe</title>
+  <title>Mesure Bagage - MediaPipe Edition</title>
 
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0"></script>
 
   <style>
+    /* Ta charte graphique exactement */
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { background: #13002F; color: white; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; min-height: 100vh; overflow: hidden; }
-
+    body { background: #13002F; color: white; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
     h2 { font-size: 18px; font-weight: 500; padding: 14px 0 4px; }
     #status { color: #ff3fa5; font-weight: bold; font-size: 13px; min-height: 20px; text-align: center; padding: 0 16px 8px; }
-
-    #container { position: relative; width: 100vw; flex: 1; background: #000; }
+    #container { position: relative; width: 100vw; flex: 1; }
     video, #canvas-live, #canvas-photo { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
     #canvas-photo { display: none; }
-
-    #btn-bar {
-      width: 100%; display: flex; justify-content: center;
-      gap: 10px; padding: 12px 16px;
-      background: rgba(19,0,47,0.95);
-      flex-wrap: wrap; z-index: 10;
-    }
-
+    #btn-bar { width: 100%; display: flex; justify-content: center; gap: 10px; padding: 12px 16px; background: rgba(19,0,47,0.95); flex-wrap: wrap; }
     button { padding: 10px 18px; font-size: 14px; font-weight: 500; border: none; border-radius: 8px; cursor: pointer; }
     #btn-capture { background: #4CAF50; color: white; }
     #btn-retake  { background: #888;    color: white; }
     #btn-measure { background: #FF9800; color: white; }
-
-    #result {
-      position: absolute; bottom: 80px; left: 5%; width: 90%;
-      background: rgba(19,0,47,0.9); border: 1px solid rgba(255,255,255,0.2);
-      border-radius: 12px; padding: 14px; display: none; text-align: center; z-index: 20;
-    }
+    #result { width: 100%; background: rgba(255,255,255,0.08); border-top: 1px solid rgba(255,255,255,0.15); padding: 14px 20px; display: none; text-align: center; }
     #result h3 { font-size: 16px; margin-bottom: 8px; color: #FF3FA6; }
-    .dim-row { font-size: 24px; font-weight: bold; margin: 4px 0; }
+    .dim-row { font-size: 22px; font-weight: 500; margin: 4px 0; }
+    .dim-label { font-size: 12px; color: #aaa; margin-bottom: 10px; }
+    #conf { font-size: 12px; color: #888; }
+    #instr { font-size: 12px; color: #ccc; text-align: center; padding: 4px 16px 0; min-height: 18px; }
+    #legend { display: flex; gap: 16px; padding: 6px 16px; font-size: 12px; color: #ccc; }
+    .legend-dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; margin-right: 5px; vertical-align: middle; }
     #cabin-check { padding: 6px 12px; border-radius: 8px; display: inline-block; margin-top: 6px; font-weight: bold; }
-
-    #legend { display: flex; gap: 16px; padding: 6px 16px; font-size: 11px; color: #ccc; }
-    .legend-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 5px; }
   </style>
 </head>
 <body>
 
-<h2>Mesure Bagage (MediaPipe)</h2>
-<div id="status">Initialisation du moteur IA...</div>
+<h2>Mesure Bagage (MediaPipe 10%)</h2>
+<div id="status">Chargement de l'IA...</div>
+<div id="instr"></div>
 
-<div id="container">
+<div id="container" style="height: 60vh;">
   <video id="video" autoplay muted playsinline></video>
   <canvas id="canvas-live"></canvas>
   <canvas id="canvas-photo"></canvas>
 </div>
 
 <div id="legend">
-  <span><span class="legend-dot" style="background:#00E5FF"></span>Bagage</span>
-  <span><span class="legend-dot" style="background:#FF3FA6"></span>Référence (Ballon)</span>
+  <span><span class="legend-dot" style="background:#00E5FF"></span>Objet à mesurer</span>
+  <span><span class="legend-dot" style="background:#FF3FA6"></span>Référence (ballon ⚽)</span>
 </div>
 
 <div id="btn-bar">
@@ -68,169 +58,222 @@
 <div id="result">
   <h3 id="res-class"></h3>
   <div class="dim-row" id="res-dims"></div>
-  <div id="cabin-check"></div>
-  <div id="conf" style="font-size:10px; color:#888; margin-top:8px;"></div>
+  <div class="dim-label">largeur × hauteur (cm)</div>
+  <div id="cabin-check" style="font-size:18px; margin-top:8px;"></div>
+  <div id="conf"></div>
 </div>
 
 <script>
+const { ObjectDetector, FilesetResolver } = tasksVision;
+
 const video = document.getElementById('video');
 const canvasLive = document.getElementById('canvas-live');
 const canvasPhoto = document.getElementById('canvas-photo');
 const ctxLive = canvasLive.getContext('2d');
 const ctxPhoto = canvasPhoto.getContext('2d');
 const statusDiv = document.getElementById('status');
+const instrDiv = document.getElementById('instr');
 
-// Configuration
-const BALL_D_MM = 220.0; // Ballon Taille 5
-const BAG_CLASSES = ['backpack', 'suitcase'];
+// Tes classes et constantes
+const BAG_CLASSES = ['backpack', 'suitcase', 'refrigerator'];
 const BALL_CLASS = 'sports ball';
 const CLASS_INFO = {
-  'backpack':    { label: 'Sac à dos', color: '#00E5FF' },
-  'suitcase':    { label: 'Valise',   color: '#00E5FF' },
-  'sports ball': { label: 'Ballon ⚽', color: '#FF3FA6' }
+  'backpack':     { label: 'Sac à dos',      color: '#00E5FF' },
+  'suitcase':     { label: 'Valise',          color: '#00E5FF' },
+  'refrigerator': { label: 'Réfrigérateur',  color: '#00E5FF' },
+  'sports ball':  { label: 'Ballon ⚽',       color: '#FF3FA6' },
 };
 
-let objectDetector;
+const BALL_D_MM = 220.0;
+const CABIN_MAX_W_CM = 55;
+const CABIN_MAX_H_CM = 35;
+
+let objectDetector = null;
+let animId = null;
 let lastDetections = [];
 let ballBox = null;
 let bagBox = null;
+let detectionBoxes = [];
 
-// Initialiser MediaPipe
-async function initMediaPipe() {
-  const vision = await tasksVision.FilesetResolver.forVisionTasks(
-    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm"
-  );
-  
-  objectDetector = await tasksVision.ObjectDetector.createFromOptions(vision, {
-    baseOptions: {
-      modelAssetPath: `https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float16/1/efficientdet_lite0.tflite`,
-      delegate: "GPU"
-    },
-    scoreThreshold: 0.1, // Seuil à 10%
-    runningMode: "VIDEO"
-  });
-  
-  statusDiv.textContent = "Modèle prêt - Cherche le ballon et le bagage";
-  startCamera();
-}
-
-async function startCamera() {
-  const stream = await navigator.mediaDevices.getUserMedia({
-    video: { facingMode: 'environment', width: 1280, height: 720 }
-  });
-  video.srcObject = stream;
-  video.onloadedmetadata = () => {
-    canvasLive.width = video.videoWidth;
-    canvasLive.height = video.videoHeight;
-    detectLoop();
-  };
-}
-
-async function detectLoop() {
-  if (!objectDetector || video.paused) return;
-
-  const detections = await objectDetector.detectForVideo(video, performance.now());
-  
-  // Formatage MediaPipe -> Format simple
-  lastDetections = detections.detections.map(d => ({
-    class: d.categories[0].categoryName,
-    score: d.categories[0].score,
-    bbox: [d.boundingBox.originX, d.boundingBox.originY, d.boundingBox.width, d.boundingBox.height]
-  })).filter(d => BAG_CLASSES.includes(d.class) || d.class === BALL_CLASS);
-
-  renderLive();
-  requestAnimationFrame(detectLoop);
-}
-
-function renderLive() {
-  ctxLive.clearRect(0, 0, canvasLive.width, canvasLive.height);
-  
-  lastDetections.forEach(d => {
-    const [x, y, w, h] = d.bbox;
-    const info = CLASS_INFO[d.class] || { label: d.class, color: '#fff' };
-
-    ctxLive.strokeStyle = info.color;
-    ctxLive.lineWidth = 4;
-    ctxLive.strokeRect(x, y, w, h);
-
-    ctxLive.fillStyle = info.color;
-    ctxLive.font = "bold 16px sans-serif";
-    ctxLive.fillText(`${info.label} ${Math.round(d.score*100)}%`, x, y > 10 ? y - 10 : 20);
-  });
-
-  updateStatusMessage();
-}
-
-function updateStatusMessage() {
-  const hasBall = lastDetections.some(d => d.class === BALL_CLASS);
-  const hasBag = lastDetections.some(d => BAG_CLASSES.includes(d.class));
-
-  if (hasBall && hasBag) {
-    statusDiv.textContent = "✅ Prêt pour la capture !";
-    statusDiv.style.color = "#00FF99";
-  } else {
-    statusDiv.textContent = "Pointe le ballon et le bagage...";
-    statusDiv.style.color = "#ff3fa5";
+// ── Caméra (Inchangé) ──────────────────────────────────────────
+async function setupCamera() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: false
+    });
+    video.srcObject = stream;
+    return new Promise(r => video.onloadedmetadata = r);
+  } catch (e) {
+    statusDiv.textContent = "Erreur Caméra : " + e.message;
   }
 }
 
+// ── Modèle MediaPipe (Nouveau) ─────────────────────────────────
+async function loadModel() {
+  try {
+    const vision = await FilesetResolver.forVisionTasks(
+      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm"
+    );
+    objectDetector = await ObjectDetector.createFromOptions(vision, {
+      baseOptions: {
+        modelAssetPath: `https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float16/1/efficientdet_lite0.tflite`,
+        delegate: "GPU"
+      },
+      scoreThreshold: 0.1, // Ton seuil de 10%
+      runningMode: "VIDEO"
+    });
+    statusDiv.textContent = 'Modèle MediaPipe prêt (Seuil 10%)';
+    instrDiv.textContent = 'Pointe vers ton bagage et ton ballon ⚽';
+    detectLoop();
+  } catch (e) {
+    statusDiv.textContent = 'Erreur MediaPipe : ' + e;
+  }
+}
+
+// ── Détection (Adapté MediaPipe) ───────────────────────────────
+function detectLoop() {
+  // Ajustement canvas
+  canvasLive.width = video.videoWidth || 640;
+  canvasLive.height = video.videoHeight || 480;
+
+  async function frame() {
+    if (!objectDetector || video.paused || video.ended) {
+      animId = requestAnimationFrame(frame);
+      return;
+    }
+    
+    try {
+      const startTimeMs = performance.now();
+      const detections = await objectDetector.detectForVideo(video, startTimeMs);
+
+      // On formate comme ton ancien code pour ne rien casser
+      const dets = detections.detections.map(d => ({
+        class: d.categories[0].categoryName,
+        score: d.categories[0].score,
+        // MediaPipe donne [x, y, w, h]
+        bbox: [d.boundingBox.originX, d.boundingBox.originY, d.boundingBox.width, d.boundingBox.height]
+      })).filter(p => (BAG_CLASSES.includes(p.class) || p.class === BALL_CLASS));
+
+      lastDetections = dets;
+      renderLive(dets);
+    } catch (e) {}
+
+    animId = requestAnimationFrame(frame);
+  }
+  animId = requestAnimationFrame(frame);
+}
+
+// ── Rendu Live (Adapté ratios) ────────────────────────────────
+function renderLive(dets) {
+  ctxLive.clearRect(0, 0, canvasLive.width, canvasLive.height);
+  
+  // Ratios pour s'assurer que le dessin suit le canvas
+  const sx = canvasLive.width / video.videoWidth;
+  const sy = canvasLive.height / video.videoHeight;
+
+  dets.forEach(d => {
+    const [x, y, w, h] = d.bbox;
+    const info = CLASS_INFO[d.class];
+    const label = `${info.label} ${Math.round(d.score * 100)}%`;
+
+    ctxLive.strokeStyle = info.color;
+    ctxLive.lineWidth = 4;
+    ctxLive.strokeRect(x * sx, y * sy, w * sx, h * sy);
+
+    ctxLive.fillStyle = info.color;
+    ctxLive.font = 'bold 15px sans-serif';
+    ctxLive.fillText(label, x * sx, (y * sy) > 10 ? (y * sy) - 10 : 20);
+  });
+
+  // Tes messages de status
+  const hasBall = dets.some(d => d.class === BALL_CLASS);
+  const hasBag = dets.some(d => BAG_CLASSES.includes(d.class));
+  if (hasBall && hasBag) {
+    statusDiv.textContent = '✅ Prêt pour la capture !';
+    statusDiv.style.color = '#00FF99';
+  } else {
+    statusDiv.textContent = 'Recherche : ' + (hasBall ? 'Bagage 🧳' : (hasBag ? 'Ballon ⚽' : 'Tout ⚽+🧳'));
+    statusDiv.style.color = '#ff3fa5';
+  }
+}
+
+// ── Capture (Ta logique reprise) ──────────────────────────────
 function capturePhoto() {
+  cancelAnimationFrame(animId);
   video.pause();
+
   canvasPhoto.width = video.videoWidth;
   canvasPhoto.height = video.videoHeight;
   ctxPhoto.drawImage(video, 0, 0);
 
-  // Identifier les meilleurs candidats
-  ballBox = lastDetections.find(d => d.class === BALL_CLASS);
-  bagBox = lastDetections.sort((a,b) => b.score - a.score).find(d => BAG_CLASSES.includes(d.class));
-
-  // Dessiner les boites figées sur la photo
-  lastDetections.forEach(d => {
+  detectionBoxes = lastDetections.map(d => {
     const [x, y, w, h] = d.bbox;
-    ctxPhoto.strokeStyle = CLASS_INFO[d.class].color;
-    ctxPhoto.lineWidth = 5;
-    ctxPhoto.strokeRect(x, y, w, h);
+    return { x1: x, y1: y, x2: x + w, y2: y + h, cls: d.class, score: d.score };
   });
 
+  ballBox = detectionBoxes.find(d => d.cls === BALL_CLASS);
+  bagBox = detectionBoxes.sort((a,b) => b.score - a.score).find(d => BAG_CLASSES.includes(d.cls));
+
+  drawDetections();
+
+  video.style.display = 'none';
   canvasLive.style.display = 'none';
   canvasPhoto.style.display = 'block';
   document.getElementById('btn-capture').style.display = 'none';
   document.getElementById('btn-retake').style.display = 'inline-block';
-  if (ballBox && bagBox) document.getElementById('btn-measure').style.display = 'inline-block';
+  document.getElementById('btn-measure').style.display = (ballBox && bagBox) ? 'inline-block' : 'none';
 }
 
+function drawDetections() {
+  detectionBoxes.forEach(d => {
+    const info = CLASS_INFO[d.cls];
+    ctxPhoto.strokeStyle = info.color;
+    ctxPhoto.lineWidth = 5;
+    ctxPhoto.strokeRect(d.x1, d.y1, d.x2 - d.x1, d.y2 - d.y1);
+    ctxPhoto.fillStyle = info.color;
+    ctxPhoto.font = 'bold 20px sans-serif';
+    ctxPhoto.fillText(info.label, d.x1, d.y1 > 10 ? d.y1 - 10 : 20);
+  });
+}
+
+// ── Ta logique de mesure intacte ──────────────────────────────
 function measure() {
-  // Calcul du ratio px/mm basé sur le ballon (moyenne largeur/hauteur pour compenser l'angle)
-  const ballRatio = ((ballBox.bbox[2] / BALL_D_MM) + (ballBox.bbox[3] / BALL_D_MM)) / 2;
+  const ballWpx = ballBox.x2 - ballBox.x1;
+  const ballHpx = ballBox.y2 - ballBox.y1;
+  const ratio = ((ballWpx / BALL_D_MM) + (ballHpx / BALL_D_MM)) / 2;
 
-  const wCm = (bagBox.bbox[2] / ballRatio / 10).toFixed(1);
-  const hCm = (bagBox.bbox[3] / ballRatio / 10).toFixed(1);
+  const bagWcm = ((bagBox.x2 - bagBox.x1) / ratio / 10).toFixed(1);
+  const bagHcm = ((bagBox.y2 - bagBox.y1) / ratio / 10).toFixed(1);
 
-  document.getElementById('res-class').textContent = CLASS_INFO[bagBox.class].label;
-  document.getElementById('res-dims').textContent = `${wCm} cm × ${hCm} cm`;
-  
-  const fits = wCm <= 55 && hCm <= 35;
-  const cabin = document.getElementById('cabin-check');
-  cabin.textContent = fits ? "✅ FORMAT CABINE OK" : "❌ TROP GRAND / HORS FORMAT";
-  cabin.style.background = fits ? "#004422" : "#440011";
-  cabin.style.color = fits ? "#00FF99" : "#FF5555";
+  const fitsCabin = bagWcm <= CABIN_MAX_W_CM && bagHcm <= CABIN_MAX_H_CM;
+  const cabinDiv = document.getElementById('cabin-check');
 
-  document.getElementById('conf').textContent = `Précision bagage: ${Math.round(bagBox.score*100)}% | Réf: Ballon 22cm`;
+  cabinDiv.textContent = fitsCabin ? '✅ Bagage Cabine OK' : '❌ Trop Grand';
+  cabinDiv.style.color = fitsCabin ? '#00FF99' : '#FF5555';
+
+  document.getElementById('res-class').textContent = CLASS_INFO[bagBox.cls].label;
+  document.getElementById('res-dims').textContent = `${bagWcm} × ${bagHcm}`;
   document.getElementById('result').style.display = 'block';
 }
 
 function retake() {
-  document.getElementById('result').style.display = 'none';
-  document.getElementById('btn-measure').style.display = 'none';
-  document.getElementById('btn-retake').style.display = 'none';
-  document.getElementById('btn-capture').style.display = 'inline-block';
-  canvasPhoto.style.display = 'none';
+  video.style.display = 'block';
   canvasLive.style.display = 'block';
+  canvasPhoto.style.display = 'none';
+  document.getElementById('btn-capture').style.display = 'inline-block';
+  document.getElementById('btn-retake').style.display = 'none';
+  document.getElementById('btn-measure').style.display = 'none';
+  document.getElementById('result').style.display = 'none';
   video.play();
   detectLoop();
 }
 
-initMediaPipe();
+async function init() {
+  await setupCamera();
+  await loadModel();
+}
+init();
 </script>
 </body>
 </html>
