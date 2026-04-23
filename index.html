@@ -4,18 +4,22 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Mesure Bagage</title>
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0"></script>
+
+  <!-- COCO-SSD charge TensorFlow.js lui-même, plus besoin de le charger séparément -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { background: #13002F; color: white; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
 
     h2 { font-size: 18px; font-weight: 500; padding: 14px 0 4px; }
 
-    #status { color: #ff3fa5; font-weight: bold; font-size: 13px; padding-bottom: 8px; min-height: 20px; text-align: center; padding: 0 16px 8px; }
+    #status { color: #ff3fa5; font-weight: bold; font-size: 13px; min-height: 20px; text-align: center; padding: 0 16px 8px; }
 
     #container { position: relative; width: 100vw; flex: 1; }
     video, #canvas-live, #canvas-photo { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
-    #canvas-photo { display: none; cursor: crosshair; touch-action: none; }
+    #canvas-photo { display: none; }
 
     #btn-bar {
       width: 100%; display: flex; justify-content: center;
@@ -28,9 +32,9 @@
       padding: 10px 18px; font-size: 14px; font-weight: 500;
       border: none; border-radius: 8px; cursor: pointer;
     }
-    #btn-capture  { background: #4CAF50; color: white; }
-    #btn-retake   { background: #888; color: white; }
-    #btn-measure  { background: #FF9800; color: white; }
+    #btn-capture { background: #4CAF50; color: white; }
+    #btn-retake  { background: #888;    color: white; }
+    #btn-measure { background: #FF9800; color: white; }
 
     #result {
       width: 100%; background: rgba(255,255,255,0.08);
@@ -43,34 +47,12 @@
     .dim-label { font-size: 12px; color: #aaa; margin-bottom: 10px; }
     #conf { font-size: 12px; color: #888; }
 
-    #instr {
-      font-size: 12px; color: #ccc; text-align: center;
-      padding: 4px 16px 0; min-height: 18px;
-    }
-    /* légende des couleurs en bas de l'écran */
-    #legend {
-      display: flex;
-      gap: 16px;
-      padding: 6px 16px;
-      font-size: 12px;
-      color: #ccc;
-    }
-    .legend-dot {
-      width: 12px;
-      height: 12px;
-      border-radius: 50%;
-      display: inline-block;
-      margin-right: 5px;
-      vertical-align: middle;
-    }
-    /* Message de vérification cabine */
-    #cabin-check {
-      padding: 6px 12px;
-      border-radius: 8px;
-      display: inline-block;
-      margin-top: 6px;
-      font-weight: bold;
-    }
+    #instr { font-size: 12px; color: #ccc; text-align: center; padding: 4px 16px 0; min-height: 18px; }
+
+    #legend { display: flex; gap: 16px; padding: 6px 16px; font-size: 12px; color: #ccc; }
+    .legend-dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; margin-right: 5px; vertical-align: middle; }
+
+    #cabin-check { padding: 6px 12px; border-radius: 8px; display: inline-block; margin-top: 6px; font-weight: bold; }
   </style>
 </head>
 <body>
@@ -84,20 +66,16 @@
   <canvas id="canvas-live"></canvas>
   <canvas id="canvas-photo"></canvas>
 </div>
+
 <div id="legend">
-  <span>
-    <span class="legend-dot" style="background: #00E5FF;" ></span>
-    Objet à mesurer
-  </span>
-  <span>
-    <span class="legend-dot" style="background: #FF3FA6;"></span>
-    Référence (ballon ⚽)
-  </span>
+  <span><span class="legend-dot" style="background:#00E5FF"></span>Objet à mesurer</span>
+  <span><span class="legend-dot" style="background:#FF3FA6"></span>Référence (ballon ⚽)</span>
 </div>
+
 <div id="btn-bar">
-  <button id="btn-capture"  onclick="capturePhoto()">📸 Capturer</button>
-  <button id="btn-retake"   onclick="retake()"  style="display:none">🔄 Reprendre</button>
-  <button id="btn-measure"  onclick="measure()"  style="display:none">📏 Mesurer</button>
+  <button id="btn-capture" onclick="capturePhoto()">📸 Capturer</button>
+  <button id="btn-retake"  onclick="retake()"       style="display:none">🔄 Reprendre</button>
+  <button id="btn-measure" onclick="measure()"      style="display:none">📏 Mesurer</button>
 </div>
 
 <div id="result">
@@ -117,38 +95,33 @@ const ctxPhoto    = canvasPhoto.getContext('2d');
 const statusDiv   = document.getElementById('status');
 const instrDiv    = document.getElementById('instr');
 
-// ── Classes détectées par YOLO ────────────────────────────────
-// Ces nombres correspondent aux IDs des classes dans le modèle COCO
-// 24 = sac à dos, 28 = valise, 32 = ballon de sport, 72 = réfrigérateur
-const TARGET_CLASSES = [24, 28, 32, 72]; // j'ai enleve 26 sac a main et ajouter le frigo
-// Regroupe tous les IDs "objets à mesurer" en un seul endroit
-const BAG_CLASSES = [24, 28, 72];
+// ── Classes COCO-SSD ──────────────────────────────────────────
+// COCO-SSD retourne des STRINGS et non des IDs numériques comme YOLO
+// C'est la différence fondamentale avec l'ancien code
+const BAG_CLASSES  = ['backpack', 'suitcase', 'refrigerator'];
+const BALL_CLASS   = 'sports ball';
 
-// Pour chaque classe : son nom affiché et sa couleur
-// CYAN  (#00E5FF) = objets à mesurer
-// ROSE  (#FF3FA6) = objet de référence (le ballon)
+// Couleur et label pour chaque classe
 const CLASS_INFO = {
-  24: { label: 'Sac à dos',    color: '#00E5FF' },
-  28: { label: 'Valise',       color: '#00E5FF' },
-  32: { label: 'Ballon de foot', color: '#FF3FA6' },
-  72: { label: 'Valise', color: '#00E5FF' },
+  'backpack'     : { label: 'Sac à dos',      color: '#00E5FF' },
+  'suitcase'     : { label: 'Valise',          color: '#00E5FF' },
+  'refrigerator' : { label: 'Réfrigérateur',  color: '#00E5FF' },
+  'sports ball'  : { label: 'Ballon ⚽',       color: '#FF3FA6' },
 };
 
 // ── Mesure de référence ───────────────────────────────────────
-// Un ballon de foot taille 5 fait exactement 220mm de diamètre
-const BALL_D_MM = 220.0; // diamètre standard d'un ballon de foot
-
-// ── Dimensions max pour la cabine (règle générale compagnies) ─
+const BALL_D_MM    = 220.0;
 const CABIN_MAX_W_CM = 55;
 const CABIN_MAX_H_CM = 35;
 
 // ── État de l'application ─────────────────────────────────────
-let model, animId; // le modèle YOLO et l'ID de la boucle d'animation
-let lastDetections = []; // dernières détections en temps réel
-let photoImg = null; // l'image figée après capture
-let bagBox   = null; // rectangle de la valise/sac détecté
-let ballBox  = null; // rectangle du ballon détecté
-let detectionBoxes = []; // tous les rectangles détectés
+let model          = null;  // le modèle COCO-SSD
+let animId         = null;  // ID de la boucle d'animation
+let lastDetections = [];    // dernières détections temps réel
+let photoImg       = null;  // image figée après capture
+let bagBox         = null;  // meilleur bagage détecté
+let ballBox        = null;  // meilleur ballon détecté
+let detectionBoxes = [];    // toutes les détections sur la photo
 
 // ── Caméra ────────────────────────────────────────────────────
 async function setupCamera() {
@@ -163,8 +136,9 @@ async function setupCamera() {
 // ── Modèle ────────────────────────────────────────────────────
 async function loadModel() {
   try {
-    model = await tf.loadGraphModel('./model/model.json');
-    statusDiv.textContent = 'Modèle prêt — pointe vers ton bagage';
+    // COCO-SSD : une seule ligne pour tout charger — pas de fichiers locaux !
+    model = await cocoSsd.load();
+    statusDiv.textContent = 'Modèle coco prêt — pointe vers ton bagage';
     instrDiv.textContent  = 'Place le ballon ⚽ à côté du bagage puis capture';
     detectLoop();
   } catch(e) {
@@ -178,74 +152,69 @@ function detectLoop() {
   canvasLive.height = video.videoHeight || 480;
 
   async function frame() {
-    if (!model || video.paused || video.ended) { animId = requestAnimationFrame(frame); return; }
-    tf.engine().startScope();
+    if (!model || video.paused || video.ended) {
+      animId = requestAnimationFrame(frame);
+      return;
+    }
     try {
-      const img     = tf.browser.fromPixels(video);
-      const resized = tf.image.resizeBilinear(img, [640, 640]);
-      const input   = resized.div(255.0).expandDims(0);
-      const output  = model.execute(input);
-      const res     = output.transpose([0, 2, 1]).squeeze();
-      const dets    = await parseYOLO(res);
+      // GROS CHANGEMENT : avec COCO-SSD on passe directement la video
+      // Plus besoin de redimensionner, normaliser, transposer comme avec YOLO !
+      // model.detect() fait tout ça en interne et retourne directement :
+      // [ { class: 'suitcase', score: 0.92, bbox: [x, y, width, height] }, ... ]
+      const predictions = await model.detect(video);
+
+      // On filtre pour garder seulement nos classes utiles
+      const dets = predictions.filter(p =>
+        (BAG_CLASSES.includes(p.class) || p.class === BALL_CLASS) && p.score > 0.1
+      );
+
       lastDetections = dets;
       renderLive(dets);
     } catch(e) {}
-    tf.engine().endScope();
+
     animId = requestAnimationFrame(frame);
   }
   animId = requestAnimationFrame(frame);
 }
 
-async function parseYOLO(res) {
-  const rawBoxes  = res.slice([0, 0], [-1, 4]);
-  const rawScores = res.slice([0, 4], [-1, 80]);
-  const maxScores = rawScores.max(1);
-  const classIdx  = rawScores.argMax(1).dataSync();
-  const [xc, yc, w, h] = tf.split(rawBoxes, 4, 1);
-  const y1 = yc.sub(h.div(2)), x1 = xc.sub(w.div(2));
-  const y2 = yc.add(h.div(2)), x2 = xc.add(w.div(2));
-  const boxes = tf.concat([y1, x1, y2, x2], 1);
-  const nmsIdx = await tf.image.nonMaxSuppressionAsync(boxes, maxScores, 10, 0.5, 0.1);
-  const idxArr = nmsIdx.arraySync();
-  const boxArr = boxes.arraySync();
-  const scrArr = maxScores.arraySync();
-  return idxArr
-    .map(i => ({ box: boxArr[i], score: scrArr[i], cls: classIdx[i] }))
-    .filter(d => TARGET_CLASSES.includes(d.cls) && d.score > 0.1);
-}
-
+// ── Affichage temps réel ──────────────────────────────────────
 function renderLive(dets) {
   ctxLive.clearRect(0, 0, canvasLive.width, canvasLive.height);
-  const sx = canvasLive.width  / 640;
-  const sy = canvasLive.height / 640;
-  
-  // Vérifie si on a les deux objets nécessaires pour mesurer
-  const hasBall = dets.some(d => d.cls === 32);
-  const hasBag  = dets.some(d => BAG_CLASSES.includes(d.cls));
-  dets.forEach(d => {
-    let [y1, x1, y2, x2] = d.box;
-    x1 *= sx; x2 *= sx; y1 *= sy; y2 *= sy;
-    const info  = CLASS_INFO[d.cls];
-    const label = `${info.label} (${Math.round(d.score * 100)}%)`;
-    
-    // Dessine le rectangle
-    ctxLive.strokeStyle = info.color;
-    ctxLive.lineWidth   = 3;
-    ctxLive.strokeRect(x1, y1, x2 - x1, y2 - y1);
 
-    // Dessine le fond du label
+  // COCO-SSD retourne bbox en coordonnées vidéo natives
+  // Plus besoin de multiplier par sx/sy comme avec YOLO !
+  // Mais le canvas CSS est étiré → on calcule quand même le ratio d'affichage
+  const sx = canvasLive.width  / video.videoWidth;
+  const sy = canvasLive.height / video.videoHeight;
+
+  const hasBall = dets.some(d => d.class === BALL_CLASS);
+  const hasBag  = dets.some(d => BAG_CLASSES.includes(d.class));
+
+  dets.forEach(d => {
+    // COCO-SSD : bbox = [x, y, width, height] — différent de YOLO qui donnait [y1,x1,y2,x2]
+    const [x, y, w, h] = d.bbox;
+    const x1 = x * sx, y1 = y * sy;
+    const bw = w * sx, bh = h * sy;
+
+    const info  = CLASS_INFO[d.class];
+    const label = `${info.label} ${Math.round(d.score * 100)}%`;
+
+    // Rectangle
+    ctxLive.strokeStyle = info.color;
+    ctxLive.lineWidth   = d.class === BALL_CLASS ? 4 : 3;
+    ctxLive.strokeRect(x1, y1, bw, bh);
+
+    // Label
     ctxLive.font = 'bold 15px sans-serif';
     const tw = ctxLive.measureText(label).width;
     ctxLive.fillStyle = info.color;
     ctxLive.fillRect(x1, y1 > 22 ? y1 - 22 : 0, tw + 10, 20);
-
-    // Écrit le texte en noir sur le fond coloré
     ctxLive.fillStyle = '#000';
-    ctxLive.fillText(label, x1 + 5, y1 > 24 ? y1 - 6 : 16);
+    ctxLive.fillText(label, x1 + 5, y1 > 22 ? y1 - 5 : 15);
   });
 
-  // Message en temps réel selon ce qui est détecté
-  if (hasBall && hasBag){
+  // Messages contextuels
+  if (hasBall && hasBag) {
     statusDiv.textContent = '✅ Ballon + bagage détectés — capture !';
     statusDiv.style.color = '#00FF99';
   } else if (hasBall) {
@@ -254,72 +223,64 @@ function renderLive(dets) {
   } else if (hasBag) {
     statusDiv.textContent = '🧳 Bagage détecté — place un ballon taille 5';
     statusDiv.style.color = '#00E5FF';
-  } else{
-      statusDiv.textContent = 'Pointe vers ton bagage et un ballon ⚽';
-      statusDiv.style.color = '#888';
+  } else {
+    statusDiv.textContent = 'Pointe vers ton bagage et un ballon ⚽';
+    statusDiv.style.color = '#888';
   }
 }
 
 // ── Capture photo ─────────────────────────────────────────────
 function capturePhoto() {
-  // 1. Arrête la boucle de détection et fige la vidéo
   cancelAnimationFrame(animId);
   video.pause();
 
-  // 2. Copie l'image de la vidéo dans le canvas photo
   canvasPhoto.width  = video.videoWidth;
   canvasPhoto.height = video.videoHeight;
   ctxPhoto.drawImage(video, 0, 0);
 
-  // 3. Sauvegarde l'image pour pouvoir la redessiner plus tard
   photoImg = new Image();
   photoImg.src = canvasPhoto.toDataURL();
 
-  // 4. Remet à zéro les détections précédentes
-  bagBox = null;
+  bagBox  = null;
   ballBox = null;
   detectionBoxes = [];
 
-  // 5. Convertit les détections temps réel en coordonnées photo
   if (lastDetections.length > 0) {
-    const sx = canvasPhoto.width  / 640;
-    const sy = canvasPhoto.height / 640;
-
+    // COCO-SSD : on convertit bbox [x,y,w,h] en format {x1,y1,x2,y2}
+    // pour rester cohérent avec le reste du code
     detectionBoxes = lastDetections.map(d => {
-      let [y1, x1, y2, x2] = d.box;
-      return { x1: x1 * sx, y1: y1 * sy, 
-        x2: x2 * sx, y2: y2 * sy, 
-        cls: d.cls, 
-        score: d.score };
+      const [x, y, w, h] = d.bbox;
+      return {
+        x1   : x,
+        y1   : y,
+        x2   : x + w,   // ← COCO-SSD donne largeur, on calcule x2
+        y2   : y + h,   // ← COCO-SSD donne hauteur, on calcule y2
+        cls  : d.class, // string ici, pas un nombre
+        score: d.score
+      };
     });
 
-    // 6. Cherche le meilleur ballon détecté
-    const ballDets = detectionBoxes.filter(d => d.cls === 32);
+    const ballDets = detectionBoxes.filter(d => d.cls === BALL_CLASS);
     if (ballDets.length > 0) {
-      // .reduce() garde celui avec le score le plus élevé
-      ballBox = ballDets.reduce((a, b) => b.score > a.score ? b : a); // à quoi sert le point d'interrogation ?
+      ballBox = ballDets.reduce((a, b) => b.score > a.score ? b : a);
     }
-    // 7. Cherche le meilleur bagage détecté (valise ou sac à dos)
-    const bagDets = detectionBoxes.filter(d=> BAG_CLASSES.includes(d.cls));
-    if(bagDets.length > 0) {
+
+    const bagDets = detectionBoxes.filter(d => BAG_CLASSES.includes(d.cls));
+    if (bagDets.length > 0) {
       bagBox = bagDets.reduce((a, b) => b.score > a.score ? b : a);
     }
 
-    // 8. Dessine tous les rectangles sur la photo figée
     drawDetections();
   }
 
-  // 9. Bascule l'affichage : cache la vidéo, montre la photo
   video.style.display       = 'none';
   canvasLive.style.display  = 'none';
   canvasPhoto.style.display = 'block';
 
-  // 10. Met à jour les boutons
   document.getElementById('btn-capture').style.display = 'none';
-  document.getElementById('btn-retake').style.display = 'inline-block';
+  document.getElementById('btn-retake').style.display  = 'inline-block';
   document.getElementById('btn-measure').style.display = (ballBox && bagBox) ? 'inline-block' : 'none';
 
-  // 11. Affiche un message selon ce qui a été détecté
   if (bagBox && ballBox) {
     statusDiv.textContent = `✅ ${CLASS_INFO[bagBox.cls].label} + ballon détectés — appuie sur Mesurer !`;
     statusDiv.style.color = '#00FF99';
@@ -327,22 +288,21 @@ function capturePhoto() {
     statusDiv.textContent = '❌ Pas de ballon détecté — reprends avec un ballon taille 5';
     statusDiv.style.color = '#FF3FA6';
   } else {
-    statusDiv.textContent = 'Aucun objet détecté — entoure quand même la carte bancaire';
+    statusDiv.textContent = '❌ Pas de bagage détecté — reprends';
     statusDiv.style.color = '#FF3FA6';
   }
 }
 
+// ── Dessin sur la photo figée ─────────────────────────────────
 function drawDetections() {
   detectionBoxes.forEach(d => {
     const info = CLASS_INFO[d.cls];
 
-    // Rectangle coloré
     ctxPhoto.strokeStyle = info.color;
-    ctxPhoto.lineWidth = d.cls === 32 ? 5 : 3 ; // ballon = trait plus épais
+    ctxPhoto.lineWidth   = d.cls === BALL_CLASS ? 5 : 3;
     ctxPhoto.strokeRect(d.x1, d.y1, d.x2 - d.x1, d.y2 - d.y1);
 
-    // Label avec fond coloré
-    const label = `${info.label} (${Math.round(d.score * 100)}%)`;
+    const label = `${info.label} ${Math.round(d.score * 100)}%`;
     ctxPhoto.font = 'bold 18px sans-serif';
     const tw = ctxPhoto.measureText(label).width;
     ctxPhoto.fillStyle = info.color;
@@ -350,8 +310,7 @@ function drawDetections() {
     ctxPhoto.fillStyle = '#000';
     ctxPhoto.fillText(label, d.x1 + 5, d.y1 > 26 ? d.y1 - 5 : 19);
 
-    // Petite icône de référence sur le ballon
-    if(d.cls === 32) {
+    if (d.cls === BALL_CLASS) {
       ctxPhoto.font = '22px sans-serif';
       ctxPhoto.fillText('📐', d.x1 + 4, d.y2 - 6);
     }
@@ -360,51 +319,32 @@ function drawDetections() {
 
 // ── Mesure ────────────────────────────────────────────────────
 function measure() {
-  // Vérifications de sécurité
-  if(!ballBox) {
-    statusDiv.textContent = '❌ Pas de ballon de référence détecté !';
-    return; // "return" stoppe la fonction ici si la condition est vraie
-  }
-  if (!bagBox)  { 
-    statusDiv.textContent = '❌ Pas de bagage détecté !';
-    return; 
-  }
+  if (!ballBox) { statusDiv.textContent = '❌ Pas de ballon détecté !'; return; }
+  if (!bagBox)  { statusDiv.textContent = '❌ Pas de bagage détecté !'; return; }
 
-  // ── Calcul du ratio pixels/mm ────────────────────────────────
-  // Le ballon fait 220mm. Combien de pixels occupe-t-il sur la photo ?
-  const ballWpx = ballBox.x2 - ballBox.x1; // largeur en pixels
-  const ballHpx = ballBox.y2 - ballBox.y1; // hauteur en pixels
+  const ballWpx = ballBox.x2 - ballBox.x1;
+  const ballHpx = ballBox.y2 - ballBox.y1;
+  const ratio   = ((ballWpx / BALL_D_MM) + (ballHpx / BALL_D_MM)) / 2;
 
-  // Moyenne largeur+hauteur pour plus de précision
-  // (le ballon devrait être un cercle, donc les deux sont proches)
-  const ratio = ((ballWpx / BALL_D_MM) + (ballHpx / BALL_D_MM)) / 2; // ratio = pixels par mm
+  const bagWcm = ((bagBox.x2 - bagBox.x1) / ratio / 10).toFixed(1);
+  const bagHcm = ((bagBox.y2 - bagBox.y1) / ratio / 10).toFixed(1);
 
-  // ── Calcul des dimensions du bagage ─────────────────────────
-  const bagWpx = bagBox.x2 - bagBox.x1; // largeur du bagage en pixels
-  const bagHpx = bagBox.y2 - bagBox.y1; // hauteur du bagage en pixels
-
-  // pixels ÷ ratio = mm, puis ÷ 10 = cm
-  const bagWcm = (bagWpx / ratio / 10).toFixed(1); // .toFixed(1) = 1 décimale)
-  const bagHcm = (bagHpx / ratio / 10).toFixed(1);
-
-  // ── Vérification cabine ──────────────────────────────────────
   const fitsCabin = bagWcm <= CABIN_MAX_W_CM && bagHcm <= CABIN_MAX_H_CM;
-  const cabinDiv = document.getElementById('cabin-check');
+  const cabinDiv  = document.getElementById('cabin-check');
 
   if (fitsCabin) {
-    cabinDiv.textContent = '✅ Accepté comme bagage cabine';
+    cabinDiv.textContent      = '✅ Accepté comme bagage cabine';
     cabinDiv.style.background = 'rgba(0,255,100,0.15)';
-    cabinDiv.style.color = '#00FF99';
+    cabinDiv.style.color      = '#00FF99';
   } else {
-    cabinDiv.textContent        = '❌ Trop grand pour la cabine';
-    cabinDiv.style.background   = 'rgba(255,60,60,0.15)';
-    cabinDiv.style.color        = '#FF5555';
+    cabinDiv.textContent      = '❌ Trop grand pour la cabine';
+    cabinDiv.style.background = 'rgba(255,60,60,0.15)';
+    cabinDiv.style.color      = '#FF5555';
   }
 
-  // ── Affichage du résultat ────────────────────────────────────
   document.getElementById('res-class').textContent = CLASS_INFO[bagBox.cls].label;
   document.getElementById('res-dims').textContent  = `${bagWcm} × ${bagHcm}`;
-  document.getElementById('conf').textContent      = `Confiance YOLO : ${Math.round(bagBox.score * 100)}% — référence ballon ⚽ (22cm)`;
+  document.getElementById('conf').textContent      = `Confiance : ${Math.round(bagBox.score * 100)}% — référence ballon ⚽ (22cm)`;
   document.getElementById('result').style.display  = 'block';
 
   statusDiv.textContent = '📏 Mesure terminée !';
@@ -413,27 +353,22 @@ function measure() {
 
 // ── Reprendre ─────────────────────────────────────────────────
 function retake() {
-  // Remet tout à zéro
   bagBox = null; ballBox = null; photoImg = null; detectionBoxes = [];
 
-  // Reaffiche la vidéo, cache la photo
   canvasPhoto.style.display = 'none';
   canvasLive.style.display  = 'block';
   video.style.display       = 'block';
   video.play();
 
-  // Remet les boutons dans leur état initial
   document.getElementById('btn-capture').style.display = 'inline-block';
   document.getElementById('btn-retake').style.display  = 'none';
   document.getElementById('btn-measure').style.display = 'none';
   document.getElementById('result').style.display      = 'none';
-  document.getElementById('cabin-check').textContent = '';
+  document.getElementById('cabin-check').textContent   = '';
 
-  // Remet les messages
   statusDiv.textContent = 'Pointe vers ton bagage et un ballon ⚽';
   statusDiv.style.color = '#888';
 
-  // Relance la boucle de détection
   detectLoop();
 }
 
@@ -446,4 +381,5 @@ init();
 </script>
 </body>
 </html>
-<!-- on est dans la derniere version avec ballon en ref_ seuil à 10% -->
+
+<!-- test avec coco-ssd -->
