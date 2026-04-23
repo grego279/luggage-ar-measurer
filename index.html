@@ -58,7 +58,7 @@
 <body>
 
 <h2>Mesure Bagage</h2>
-<div id="status">Chargement du modèle...</div>
+<div id="status">Chargement du modèle coco-ssd seuil 10%...</div>
 <div id="instr"></div>
 
 <div id="container" style="height: 60vh;">
@@ -161,7 +161,7 @@ function detectLoop() {
       // Plus besoin de redimensionner, normaliser, transposer comme avec YOLO !
       // model.detect() fait tout ça en interne et retourne directement :
       // [ { class: 'suitcase', score: 0.92, bbox: [x, y, width, height] }, ... ]
-      const predictions = await model.detect(video);
+      const predictions = await model.detect(video, 20, 0.1); // seuil à 10% par défaut est à 50%
 
       // On filtre pour garder seulement nos classes utiles
       const dets = predictions.filter(p =>
