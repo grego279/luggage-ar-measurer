@@ -3,14 +3,16 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Mesure Bagage _ mediapipe</title>
+  <title>Mesure Bagage</title>
 
   <!--
-    MediaPipe Tasks Vision — remplace TensorFlow.js + COCO-SSD
-    On charge le bundle via CDN, il inclut le runtime WASM + l'API JS
+    MediaPipe Tasks Vision — chargement via CDN
+    IMPORTANT : on utilise vision_bundle.js (PAS .mjs)
+    Ce bundle expose FilesetResolver, ObjectDetector, etc. sur window
+    → compatible avec un <script> classique (pas besoin de type="module")
   -->
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/vision_bundle.mjs"
-          crossorigin="anonymous" type="module"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/vision_bundle.js"
+          crossorigin="anonymous"></script>
 
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -60,7 +62,7 @@
 </head>
 <body>
 
-<h2>Mesure Bagage _ mediapipe</h2>
+<h2>Mesure Bagage</h2>
 <div id="status">Chargement du modèle...</div>
 <div id="instr"></div>
 
@@ -90,18 +92,10 @@
 </div>
 
 <!--
-  IMPORTANT : on utilise type="module" car l'import dynamique de MediaPipe
-  nécessite un contexte module ES pour fonctionner correctement.
+  Script CLASSIQUE (pas type="module") car vision_bundle.js
+  expose ObjectDetector et FilesetResolver sur le scope global (window)
 -->
-<script type="module">
-
-// ── Import MediaPipe Tasks Vision ─────────────────────────────
-// On importe ObjectDetector et FilesetResolver depuis le CDN
-// FilesetResolver charge les fichiers WASM nécessaires au runtime
-import {
-  ObjectDetector,
-  FilesetResolver
-} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest";
+<script>
 
 // ── Éléments DOM ──────────────────────────────────────────────
 const video       = document.getElementById('video');
@@ -113,12 +107,11 @@ const statusDiv   = document.getElementById('status');
 const instrDiv    = document.getElementById('instr');
 
 // ── Classes cibles ────────────────────────────────────────────
-// MediaPipe utilise EfficientDet-Lite0 entraîné sur COCO
-// Les noms de catégories sont les mêmes que COCO (en anglais)
+// MediaPipe EfficientDet-Lite0 est entraîné sur COCO 80 classes
+// Les categoryName retournés sont les noms COCO en anglais
 const BAG_CLASSES = ['backpack', 'suitcase', 'refrigerator'];
 const BALL_CLASS  = 'sports ball';
 
-// Couleur et label pour chaque classe
 const CLASS_INFO = {
   'backpack'     : { label: 'Sac à dos',     color: '#00E5FF' },
   'suitcase'     : { label: 'Valise',         color: '#00E5FF' },
@@ -127,18 +120,18 @@ const CLASS_INFO = {
 };
 
 // ── Mesure de référence ───────────────────────────────────────
-const BALL_D_MM      = 220.0;        // diamètre ballon taille 5 en mm
+const BALL_D_MM      = 220.0;
 const CABIN_MAX_W_CM = 55;
 const CABIN_MAX_H_CM = 35;
 
-// ── État de l'application ─────────────────────────────────────
-let objectDetector = null;   // instance MediaPipe ObjectDetector
-let animId         = null;   // ID requestAnimationFrame
-let lastDetections = [];     // détections temps réel (format normalisé)
-let photoImg       = null;   // image figée après capture
-let bagBox         = null;   // meilleur bagage détecté
-let ballBox        = null;   // meilleur ballon détecté
-let detectionBoxes = [];     // toutes les détections sur la photo
+// ── État ──────────────────────────────────────────────────────
+let objectDetector = null;
+let animId         = null;
+let lastDetections = [];   // format normalisé interne
+let photoImg       = null;
+let bagBox         = null;
+let ballBox        = null;
+let detectionBoxes = [];
 
 // ── Caméra ────────────────────────────────────────────────────
 async function setupCamera() {
@@ -153,30 +146,35 @@ async function setupCamera() {
 // ── Chargement du modèle MediaPipe ────────────────────────────
 async function loadModel() {
   try {
-    // 1) Charger le runtime WASM de MediaPipe Vision
+    // 1) Charger le runtime WASM via FilesetResolver
+    //    FilesetResolver est exposé globalement par vision_bundle.js
     const vision = await FilesetResolver.forVisionTasks(
       "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
     );
 
-    // 2) Créer l'ObjectDetector avec le modèle EfficientDet-Lite0
-    //    - runningMode "VIDEO" : optimisé pour le flux vidéo continu
-    //    - scoreThreshold bas (0.15) pour ne pas rater le ballon
+    // 2) Créer l'ObjectDetector
+    //    - Modèle EfficientDet-Lite0 float16 (meilleure précision que uint8)
+    //    - runningMode "VIDEO" pour detectForVideo()
+    //    - scoreThreshold à 0.15 pour ne pas rater le ballon
     objectDetector = await ObjectDetector.createFromOptions(vision, {
       baseOptions: {
         modelAssetPath:
-          "https://storage.googleapis.com/mediapipe-tasks/object_detector/efficientdet_lite0_uint8.tflite",
-        delegate: "GPU"   // utilise WebGL si dispo, sinon fallback CPU
+          "https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float16/1/efficientdet_lite0.tflite",
+        delegate: "GPU"
       },
       scoreThreshold: 0.15,
-      runningMode: "VIDEO"
+      runningMode: "VIDEO",
+      maxResults: 10
     });
 
     statusDiv.textContent = 'Modèle MediaPipe prêt — pointe vers ton bagage';
     instrDiv.textContent  = 'Place le ballon ⚽ à côté du bagage puis capture';
+    console.log('✅ ObjectDetector chargé avec succès');
     detectLoop();
+
   } catch (e) {
     statusDiv.textContent = 'Erreur chargement modèle : ' + e.message;
-    console.error(e);
+    console.error('❌ Erreur modèle :', e);
   }
 }
 
@@ -185,47 +183,50 @@ function detectLoop() {
   canvasLive.width  = video.videoWidth  || 640;
   canvasLive.height = video.videoHeight || 480;
 
-  // MediaPipe detectForVideo a besoin d'un timestamp croissant
-  // On utilise performance.now() et on vérifie que la frame a changé
   let lastVideoTime = -1;
 
-  async function frame() {
+  function frame() {
     if (!objectDetector || video.paused || video.ended) {
       animId = requestAnimationFrame(frame);
       return;
     }
 
-    // Ne relancer la détection que si la frame vidéo a changé
+    // Ne détecter que quand la frame vidéo a changé
     if (video.currentTime !== lastVideoTime) {
       lastVideoTime = video.currentTime;
 
       try {
-        // ── DIFFÉRENCE CLÉ avec COCO-SSD ──
-        // MediaPipe : detectForVideo(videoElement, timestampMs)
-        // Retourne { detections: [ { boundingBox: {originX, originY, width, height},
-        //                            categories: [{categoryName, score, ...}] } ] }
+        // ── APPEL CLÉ MediaPipe ──
+        // detectForVideo() est SYNCHRONE (pas de await)
+        // Il retourne directement { detections: [...] }
+        // Chaque detection a :
+        //   - boundingBox : { originX, originY, width, height } en pixels vidéo
+        //   - categories  : [{ categoryName, score, index, displayName }]
         const result = objectDetector.detectForVideo(video, performance.now());
 
-        // Filtrer pour ne garder que nos classes utiles
-        const dets = result.detections.filter(d => {
-          const name = d.categories[0].categoryName;
-          return (BAG_CLASSES.includes(name) || name === BALL_CLASS);
-        });
+        // Filtrer nos classes utiles
+        const dets = [];
+        for (const d of result.detections) {
+          if (!d.categories || d.categories.length === 0) continue;
+          const name  = d.categories[0].categoryName;
+          const score = d.categories[0].score;
+          if ((BAG_CLASSES.includes(name) || name === BALL_CLASS) && score > 0.1) {
+            dets.push({
+              cls   : name,
+              score : score,
+              x     : d.boundingBox.originX,
+              y     : d.boundingBox.originY,
+              w     : d.boundingBox.width,
+              h     : d.boundingBox.height
+            });
+          }
+        }
 
-        // Normaliser dans un format interne simple pour le reste du code
-        lastDetections = dets.map(d => ({
-          cls   : d.categories[0].categoryName,
-          score : d.categories[0].score,
-          // boundingBox MediaPipe = {originX, originY, width, height} en pixels vidéo
-          x     : d.boundingBox.originX,
-          y     : d.boundingBox.originY,
-          w     : d.boundingBox.width,
-          h     : d.boundingBox.height
-        }));
-
-        renderLive(lastDetections);
+        lastDetections = dets;
+        renderLive(dets);
       } catch (e) {
-        // Silencieux en cas d'erreur ponctuelle
+        // Erreur ponctuelle possible, on ignore silencieusement
+        console.warn('Erreur détection frame :', e.message);
       }
     }
 
@@ -238,9 +239,6 @@ function detectLoop() {
 function renderLive(dets) {
   ctxLive.clearRect(0, 0, canvasLive.width, canvasLive.height);
 
-  // Le canvas CSS est étiré pour remplir le conteneur
-  // Les coordonnées MediaPipe sont déjà en pixels vidéo natifs
-  // On calcule le ratio canvas interne / vidéo (normalement 1:1)
   const sx = canvasLive.width  / video.videoWidth;
   const sy = canvasLive.height / video.videoHeight;
 
@@ -254,6 +252,7 @@ function renderLive(dets) {
     const bh = d.h * sy;
 
     const info  = CLASS_INFO[d.cls];
+    if (!info) return; // sécurité
     const label = `${info.label} ${Math.round(d.score * 100)}%`;
 
     // Rectangle
@@ -287,7 +286,7 @@ function renderLive(dets) {
 }
 
 // ── Capture photo ─────────────────────────────────────────────
-window.capturePhoto = function() {
+function capturePhoto() {
   cancelAnimationFrame(animId);
   video.pause();
 
@@ -303,7 +302,7 @@ window.capturePhoto = function() {
   detectionBoxes = [];
 
   if (lastDetections.length > 0) {
-    // Convertir en format {x1, y1, x2, y2} pour cohérence avec le calcul de mesure
+    // Convertir en format {x1, y1, x2, y2}
     detectionBoxes = lastDetections.map(d => ({
       x1   : d.x,
       y1   : d.y,
@@ -344,12 +343,13 @@ window.capturePhoto = function() {
     statusDiv.textContent = '❌ Pas de bagage détecté — reprends';
     statusDiv.style.color = '#FF3FA6';
   }
-};
+}
 
 // ── Dessin sur la photo figée ─────────────────────────────────
 function drawDetections() {
   detectionBoxes.forEach(d => {
     const info = CLASS_INFO[d.cls];
+    if (!info) return;
 
     ctxPhoto.strokeStyle = info.color;
     ctxPhoto.lineWidth   = d.cls === BALL_CLASS ? 5 : 3;
@@ -371,13 +371,12 @@ function drawDetections() {
 }
 
 // ── Mesure ────────────────────────────────────────────────────
-window.measure = function() {
+function measure() {
   if (!ballBox) { statusDiv.textContent = '❌ Pas de ballon détecté !'; return; }
   if (!bagBox)  { statusDiv.textContent = '❌ Pas de bagage détecté !'; return; }
 
   const ballWpx = ballBox.x2 - ballBox.x1;
   const ballHpx = ballBox.y2 - ballBox.y1;
-  // Moyenne largeur/hauteur du ballon pour estimer le ratio px→mm
   const ratio   = ((ballWpx / BALL_D_MM) + (ballHpx / BALL_D_MM)) / 2;
 
   const bagWcm = ((bagBox.x2 - bagBox.x1) / ratio / 10).toFixed(1);
@@ -403,10 +402,10 @@ window.measure = function() {
 
   statusDiv.textContent = '📏 Mesure terminée !';
   statusDiv.style.color = '#00FF99';
-};
+}
 
 // ── Reprendre ─────────────────────────────────────────────────
-window.retake = function() {
+function retake() {
   bagBox = null; ballBox = null; photoImg = null; detectionBoxes = [];
 
   canvasPhoto.style.display = 'none';
@@ -424,7 +423,7 @@ window.retake = function() {
   statusDiv.style.color = '#888';
 
   detectLoop();
-};
+}
 
 // ── Init ──────────────────────────────────────────────────────
 async function init() {
