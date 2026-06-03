@@ -3,304 +3,152 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Mesure Bagage AR</title>
+  <title>Mesure AR Test</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { background: #13002F; color: white; font-family: sans-serif; min-height: 100vh; overflow: hidden; }
-
-    /* L'interface utilisateur qui s'affichera au-dessus de l'AR */
-    #ar-ui {
-      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-      display: flex; flex-direction: column; align-items: center;
-      pointer-events: none; z-index: 10;
+    /* Zéro fioriture, fond transparent obligatoire pour voir la caméra */
+    body { 
+      margin: 0; 
+      overflow: hidden; 
+      background-color: transparent; 
+      font-family: sans-serif; 
     }
-
-    h2 { font-size: 18px; font-weight: 500; padding: 14px 0 4px; pointer-events: auto; }
-    #status { color: #ff3fa5; font-weight: bold; font-size: 13px; text-align: center; padding: 0 16px 8px; pointer-events: auto; }
-    #instr { font-size: 12px; color: #ccc; text-align: center; padding: 4px 16px; min-height: 18px; pointer-events: auto; }
-
-    #btn-bar {
-      position: absolute; bottom: 20px; width: 100%; 
-      display: flex; justify-content: center; gap: 10px; padding: 0 16px;
-      pointer-events: auto;
-    }
-
-    button {
-      padding: 12px 20px; font-size: 14px; font-weight: 500;
-      border: none; border-radius: 8px; cursor: pointer; pointer-events: auto;
-    }
-    #ARButton { background: #4CAF50 !important; color: white !important; font-weight: bold; }
-    #btn-reset { background: #888; color: white; display: none; }
-
-    #result {
-      position: absolute; top: 120px; width: 90%; max-width: 340px;
-      background: rgba(19, 0, 47, 0.85); border: 1px solid rgba(255,255,255,0.15);
-      border-radius: 12px; padding: 14px 20px; display: none; text-align: center;
-      pointer-events: auto; box-shadow: 0 4px 20px rgba(0,0,0,0.5);
-    }
-    #result h3 { font-size: 16px; margin-bottom: 8px; color: #00E5FF; }
-    .dim-row { font-size: 28px; font-weight: 500; margin: 4px 0; color: #fff; }
-    .dim-label { font-size: 12px; color: #aaa; margin-bottom: 10px; }
     
-    #cabin-check {
-      padding: 6px 12px; border-radius: 8px; display: inline-block;
-      margin-top: 6px; font-weight: bold; font-size: 16px;
+    /* L'interface qui flotte par-dessus la caméra */
+    #ui-layer {
+      position: absolute; 
+      top: 10px; 
+      left: 10px; 
+      right: 10px;
+      color: white; 
+      text-shadow: 1px 1px 3px black; /* Pour rester lisible sur la vidéo */
+      pointer-events: none; /* Laisse passer les clics vers la 3D */
+      z-index: 10;
     }
+
+    h1 { font-size: 18px; margin-bottom: 5px; }
+    #info { font-size: 16px; font-weight: bold; color: #00FF99; }
   </style>
 </head>
 <body>
 
-<div id="ar-ui">
-  <h2>Mesure Bagage AR</h2>
-  <div id="status">Initialisation du système spatial...</div>
-  <div id="instr">Déplacez doucement le téléphone pour détecter le sol.</div>
-
-  <div id="result">
-    <h3 id="res-class">Dimensions Mesurées</h3>
-    <div class="dim-row" id="res-dims">0 × 0</div>
-    <div class="dim-label">largeur × hauteur (cm)</div>
-    <div id="cabin-check"></div>
+  <div id="ui-layer">
+    <h1>Test AR Basique</h1>
+    <div id="info">1. Appuie sur START AR en bas.<br>2. Vise le sol.</div>
   </div>
 
-  <div id="btn-bar">
-    <button id="btn-reset" onclick="resetMeasurement()">🔄 Réinitialiser</button>
-  </div>
-</div>
+  <script type="module">
+    import { ARButton } from 'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/jsm/webxr/ARButton.js';
 
-<script type="module">
-  // Module d'importation de l'ARButton officiel de Three.js
-  import { ARButton } from 'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/jsm/webxr/ARButton.js';
+    let scene, camera, renderer, reticle;
+    let hitTestSource = null;
+    let hitTestSourceRequested = false;
+    let points = []; 
 
-  // ── Constantes & États ────────────────────────────────────────
-  const CABIN_MAX_W_CM = 55;
-  const CABIN_MAX_H_CM = 35;
+    const infoDiv = document.getElementById('info');
 
-  let container, scene, camera, renderer;
-  let hitTestSource = null;
-  let hitTestSourceRequested = false;
+    init();
 
-  let reticle; // Le pointeur virtuel au sol
-  let points = []; // Stocke les positions 3D cliquées
-  let currentLines = []; // Références aux lignes 3D tracées
-  let currentSpheres = []; // Références aux points 3D tracés
+    function init() {
+      // 1. Scène et Caméra
+      scene = new THREE.Scene();
+      camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
+      scene.add(new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1));
 
-  /* Étapes de mesure :
-    1. 'WIDTH_START' -> Attend le 1er clic (origine de la largeur)
-    2. 'WIDTH_END'   -> Attend le 2e clic (fin de la largeur)
-    3. 'HEIGHT_END'  -> Attend le 3e clic (hauteur depuis l'origine)
-  */
-  let measureStep = 'WIDTH_START'; 
-  let measuredWidth = 0;
-  let measuredHeight = 0;
+      // 2. Rendu WebGL (alpha: true est crucial pour voir la caméra)
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+      renderer.setPixelRatio(window.devicePixelRatio);
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.xr.enabled = true;
+      document.body.appendChild(renderer.domElement);
 
-  const statusDiv = document.getElementById('status');
-  const instrDiv = document.getElementById('instr');
-  const resultDiv = document.getElementById('result');
-  const resDims = document.getElementById('res-dims');
-  const cabinCheck = document.getElementById('cabin-check');
-  const btnReset = document.getElementById('btn-reset');
+      // 3. Bouton AR avec DomOverlay pour garder le texte visible
+      document.body.appendChild(ARButton.createButton(renderer, {
+        requiredFeatures: ['hit-test'],
+        optionalFeatures: ['dom-overlay'],
+        domOverlay: { root: document.getElementById('ui-layer') }
+      }));
 
-  init();
+      // 4. Le viseur (réticule) pour le sol
+      reticle = new THREE.Mesh(
+        new THREE.RingGeometry(0.04, 0.05, 32).rotateX(-Math.PI / 2),
+        new THREE.MeshBasicMaterial({ color: 0x00FF00 })
+      );
+      reticle.matrixAutoUpdate = false;
+      reticle.visible = false;
+      scene.add(reticle);
 
-  function init() {
-    container = document.createElement('div');
-    document.body.appendChild(container);
+      // 5. Interaction (clic sur l'écran)
+      const controller = renderer.xr.getController(0);
+      controller.addEventListener('select', onSelect);
+      scene.add(controller);
 
-    // 1. Configuration de la scène 3D Three.js
-    scene = new THREE.Scene();
-    camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
-
-    const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
-    scene.add(light);
-
-    // 2. Configuration du moteur de rendu WebGL
-    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    renderer.setPixelRatio(window.devicePixelRatio);
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.xr.enabled = true;
-    container.appendChild(renderer.domElement);
-
-    // 3. Ajout du bouton d'activation AR (gère l'overlay HTML)
-    const arButton = ARButton.createButton(renderer, {
-      requiredFeatures: ['hit-test'],
-      optionalFeatures: ['dom-overlay'],
-      domOverlay: { root: document.getElementById('ar-ui') }
-    });
-    document.getElementById('btn-bar').appendChild(arButton);
-
-    // Listener quand la session AR commence
-    renderer.xr.addEventListener('sessionstart', () => {
-      statusDiv.textContent = "Mode AR Activé";
-      statusDiv.style.color = "#00FF99";
-      instrDiv.textContent = "Visez le sol pour faire apparaître le pointeur cible.";
-    });
-
-    // 4. Création du réticule (le viseur qui suit le sol)
-    reticle = new THREE.Mesh(
-      new THREE.RingGeometry(0.04, 0.05, 32).rotateX(-Math.PI / 2),
-      new THREE.MeshBasicMaterial({ color: 0x00E5FF })
-    );
-    reticle.matrixAutoUpdate = false;
-    reticle.visible = false;
-    scene.add(reticle);
-
-    // 5. Gestion de l'interaction (Le tap sur l'écran du tel)
-    const controller = renderer.xr.getController(0);
-    controller.addEventListener('select', onSelect);
-    scene.add(controller);
-
-    window.addEventListener('resize', onWindowResize);
-    
-    // Démarre la boucle d'animation
-    renderer.setAnimationLoop(render);
-  }
-
-  // ── Logique de clic (Tap écran) ──────────────────────────────
-  function onSelect() {
-    if (!reticle.visible) return; // On n'agit que si le sol est détecté
-
-    // Récupère la position 3D exacte du réticule à cet instant
-    const position = new THREE.Vector3();
-    position.setFromMatrixPosition(reticle.matrix);
-
-    // Crée une petite sphère visuelle au point d'impact
-    const sphereGeo = new THREE.SphereGeometry(0.015, 16, 16);
-    const sphereMat = new THREE.MeshBasicMaterial({ color: measureStep.startsWith('WIDTH') ? 0x00E5FF : 0xFF3FA6 });
-    const sphere = new THREE.Mesh(sphereGeo, sphereMat);
-    sphere.position.copy(position);
-    scene.add(sphere);
-    currentSpheres.push(sphere);
-
-    if (measureStep === 'WIDTH_START') {
-      points[0] = position;
-      measureStep = 'WIDTH_END';
-      statusDiv.textContent = "📏 Largeur : Point de départ fixé";
-      instrDiv.textContent = "Éloignez votre viseur pour tracer la largeur de la valise, puis touchez à nouveau.";
-      btnReset.style.display = 'inline-block';
-
-    } else if (measureStep === 'WIDTH_END') {
-      points[1] = position;
-      
-      // Calcule la distance entre Point 0 et Point 1 (Largeur)
-      measuredWidth = points[0].distanceTo(points[1]) * 100; // Conversion en cm
-      
-      // Trace une ligne en cyan entre les deux points
-      drawLine(points[0], points[1], 0x00E5FF);
-
-      measureStep = 'HEIGHT_END';
-      statusDiv.textContent = `✅ Largeur fixée : ${measuredWidth.toFixed(1)} cm`;
-      instrDiv.textContent = "Maintenant, visez le SOMMET (le haut) de votre bagage et touchez l'écran.";
-
-    } else if (measureStep === 'HEIGHT_END') {
-      points[2] = position;
-
-      // Pour la hauteur d'un objet posé au sol, on calcule simplement la différence d'altitude (axe Y) 
-      // entre le sommet (Point 2) et le sol d'origine (Point 0)
-      measuredHeight = Math.abs(points[2].y - points[0].y) * 100;
-
-      // Crée un point virtuel projeté au sol à la verticale du sommet pour tracer la ligne de hauteur
-      const groundProjectedPoint = new THREE.Vector3(points[2].x, points[0].y, points[2].z);
-      drawLine(groundProjectedPoint, points[2], 0xFF3FA6);
-
-      // Affichage des résultats finaux
-      showResults();
-      measureStep = 'DONE';
+      renderer.setAnimationLoop(render);
     }
-  }
 
-  // ── Outils de tracé ──────────────────────────────────────────
-  function drawLine(p1, p2, colorHex) {
-    const material = new THREE.LineBasicMaterial({ color: colorHex, linewidth: 4 });
-    const pointsArr = [p1, p2];
-    const geometry = new THREE.BufferGeometry().setFromPoints(pointsArr);
-    const line = new THREE.Line(geometry, material);
-    scene.add(line);
-    currentLines.push(line);
-  }
+    function onSelect() {
+      if (!reticle.visible) return;
 
-  // ── Affichage des résultats et validation Cabine ────────────
-  function showResults() {
-    statusDiv.textContent = "📏 Mesure AR Terminée !";
-    statusDiv.style.color = "#00FF99";
-    instrDiv.textContent = "Appuyez sur Réinitialiser pour recommencer.";
+      // Récupère la position cliquée
+      const position = new THREE.Vector3();
+      position.setFromMatrixPosition(reticle.matrix);
 
-    resDims.textContent = `${measuredWidth.toFixed(1)} × ${measuredHeight.toFixed(1)}`;
-    
-    const fitsCabin = measuredWidth <= CABIN_MAX_W_CM && measuredHeight <= CABIN_MAX_H_CM;
-    if (fitsCabin) {
-      cabinCheck.textContent = '✅ Accepté en Cabine';
-      cabinCheck.style.background = 'rgba(0,255,100,0.2)';
-      cabinCheck.style.color = '#00FF99';
-    } else {
-      cabinCheck.textContent = '❌ Trop grand pour la cabine';
-      cabinCheck.style.background = 'rgba(255,60,60,0.2)';
-      cabinCheck.style.color = '#FF5555';
-    }
-    resultDiv.style.display = 'block';
-  }
+      // Place un point visuel (sphère rouge)
+      const sphere = new THREE.Mesh(
+        new THREE.SphereGeometry(0.02, 16, 16),
+        new THREE.MeshBasicMaterial({ color: 0xff0000 })
+      );
+      sphere.position.copy(position);
+      scene.add(sphere);
+      points.push(position);
 
-  // ── Reset ────────────────────────────────────────────────────
-  window.resetMeasurement = function() {
-    // Nettoyage de la scène 3D
-    currentLines.forEach(l => scene.remove(l));
-    currentSpheres.forEach(s => scene.remove(s));
-    currentLines = [];
-    currentSpheres = [];
-    points = [];
-    
-    // Reset états et UI
-    measureStep = 'WIDTH_START';
-    measuredWidth = 0;
-    measuredHeight = 0;
-    resultDiv.style.display = 'none';
-    btnReset.style.display = 'none';
-    statusDiv.textContent = "Système réinitialisé";
-    statusDiv.style.color = "#00FF99";
-    instrDiv.textContent = "Visez le sol pour placer le premier point de la largeur.";
-  }
+      if (points.length === 1) {
+        infoDiv.innerHTML = "Point 1 fixé.<br>Clique sur un 2ème point pour mesurer.";
+      } else if (points.length === 2) {
+        // Calcule la distance entre les deux points
+        const distanceMetres = points[0].distanceTo(points[1]);
+        const distanceCm = (distanceMetres * 100).toFixed(1);
+        
+        infoDiv.innerHTML = `Distance mesurée : ${distanceCm} cm<br>Recharge la page pour recommencer.`;
 
-  function onWindowResize() {
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
-  }
-
-  // ── Boucle de rendu et Hit-Test permanent ─────────────────────
-  function render(timestamp, frame) {
-    if (frame) {
-      const referenceSpace = renderer.xr.getReferenceSpace();
-      const session = renderer.xr.getSession();
-
-      // Demande l'accès au capteur de calcul de surface (Hit-test) au démarrage
-      if (hitTestSourceRequested === false) {
-        session.requestReferenceSpace('viewer').then((viewerSpace) => {
-          session.requestHitTestSource({ space: viewerSpace }).then((source) => {
-            hitTestSource = source;
-          });
-        });
-        session.addEventListener('end', () => {
-          hitTestSourceRequested = false;
-          hitTestSource = null;
-        });
-        hitTestSourceRequested = true;
+        // Trace une ligne entre les deux points
+        const material = new THREE.LineBasicMaterial({ color: 0xffffff, linewidth: 3 });
+        const geometry = new THREE.BufferGeometry().setFromPoints([points[0], points[1]]);
+        scene.add(new THREE.Line(geometry, material));
       }
+    }
 
-      // Si le capteur est prêt, on projette un rayon virtuel vers le sol réel
-      if (hitTestSource) {
-        const hitTestResults = frame.getHitTestResults(hitTestSource);
-        if (hitTestResults.length) {
-          const hit = hitTestResults[0];
-          reticle.visible = true;
-          // Positionne le réticule 3D sur le sol détecté
-          reticle.matrix.fromArray(hit.getPose(referenceSpace).transform.matrix);
-        } else {
-          reticle.visible = false;
+    function render(timestamp, frame) {
+      if (frame) {
+        const referenceSpace = renderer.xr.getReferenceSpace();
+        const session = renderer.xr.getSession();
+
+        if (hitTestSourceRequested === false) {
+          session.requestReferenceSpace('viewer').then((viewerSpace) => {
+            session.requestHitTestSource({ space: viewerSpace }).then((source) => {
+              hitTestSource = source;
+            });
+          });
+          session.addEventListener('end', () => {
+            hitTestSourceRequested = false;
+            hitTestSource = null;
+          });
+          hitTestSourceRequested = true;
+        }
+
+        if (hitTestSource) {
+          const hitTestResults = frame.getHitTestResults(hitTestSource);
+          if (hitTestResults.length) {
+            const hit = hitTestResults[0];
+            reticle.visible = true;
+            reticle.matrix.fromArray(hit.getPose(referenceSpace).transform.matrix);
+          } else {
+            reticle.visible = false;
+          }
         }
       }
+      renderer.render(scene, camera);
     }
-    renderer.render(scene, camera);
-  }
-</script>
+  </script>
 </body>
 </html>
