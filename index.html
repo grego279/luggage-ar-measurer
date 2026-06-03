@@ -5,148 +5,703 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Mesure Bagage</title>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { background: #13002F; color: white; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
+    body { background: #13002F; color: white; font-family: sans-serif;
+           display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
 
-    h2 { font-size: 18px; font-weight: 500; padding: 14px 0 4px; }
+    /* ── Écran d'accueil ──────────────────────────────────────── */
+    #screen-home {
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; padding: 30px 20px; gap: 20px;
+      min-height: 100vh; width: 100%; text-align: center;
+    }
+    #screen-home h1 { font-size: 24px; font-weight: 600; }
+    #screen-home p  { font-size: 13px; color: #aaa; max-width: 300px; }
 
-    #status { color: #ff3fa5; font-weight: bold; font-size: 13px; padding-bottom: 8px; min-height: 20px; text-align: center; padding: 0 16px 8px; }
+    .mode-btn {
+      width: 280px; padding: 18px 16px; border: none; border-radius: 14px;
+      cursor: pointer; font-size: 15px; font-weight: 600;
+      display: flex; flex-direction: column; align-items: center; gap: 6px;
+    }
+    .mode-btn .icon    { font-size: 36px; }
+    .mode-btn .title   { font-size: 17px; }
+    .mode-btn .sub     { font-size: 11px; font-weight: 400; opacity: 0.8; }
+    .mode-btn .badge   { font-size: 10px; padding: 2px 8px; border-radius: 99px;
+                         margin-top: 4px; font-weight: 500; }
 
-    #container { position: relative; width: 100vw; flex: 1; }
-    video, #canvas-live, #canvas-photo { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
-    #canvas-photo { display: none; cursor: crosshair; touch-action: none; }
+    #btn-start-ar   { background: linear-gradient(135deg, #7B1FA2, #4A148C); color: white; }
+    #btn-start-yolo { background: linear-gradient(135deg, #1565C0, #0D47A1); color: white; }
+    #btn-start-ar   .badge { background: rgba(255,255,255,0.2); color: white; }
+    #btn-start-yolo .badge { background: rgba(255,255,255,0.2); color: white; }
 
-    #btn-bar {
-      width: 100%; display: flex; justify-content: center;
-      gap: 10px; padding: 12px 16px;
-      background: rgba(19,0,47,0.95);
-      flex-wrap: wrap;
+    #ar-not-supported {
+      font-size: 11px; color: #FF7043; background: rgba(255,112,67,0.12);
+      border-radius: 8px; padding: 8px 14px; max-width: 280px;
     }
 
-    button {
-      padding: 10px 18px; font-size: 14px; font-weight: 500;
-      border: none; border-radius: 8px; cursor: pointer;
-    }
-    #btn-capture  { background: #4CAF50; color: white; }
-    #btn-retake   { background: #888; color: white; }
-    #btn-measure  { background: #FF9800; color: white; }
-    #btn-debug    { background: #9C27B0; color: white; }
-    #btn-test-boxes { background: #2196F3; color: white; }
+    /* ── Mode YOLO (UI classique) ─────────────────────────────── */
+    #yolo-ui { display: none; flex-direction: column; align-items: center;
+               width: 100%; min-height: 100vh; }
 
-    #result {
+    #yolo-header { display: flex; align-items: center; width: 100%;
+                   padding: 12px 16px; gap: 10px; }
+    #yolo-header h2 { font-size: 17px; font-weight: 500; flex: 1; }
+    #btn-back-home { background: rgba(255,255,255,0.1); color: white;
+                     border: none; border-radius: 8px; padding: 6px 12px;
+                     font-size: 12px; cursor: pointer; }
+
+    #status { color: #ff3fa5; font-weight: bold; font-size: 13px;
+              text-align: center; padding: 0 16px 8px; min-height: 20px; }
+    #instr  { font-size: 12px; color: #ccc; text-align: center;
+              padding: 4px 16px 0; min-height: 18px; }
+
+    #container { position: relative; width: 100vw; height: 55vh; }
+    video, #canvas-live, #canvas-photo {
+      position: absolute; top: 0; left: 0;
+      width: 100%; height: 100%; object-fit: cover;
+    }
+    #canvas-photo { display: none; }
+
+    #legend { display: flex; gap: 16px; padding: 6px 16px;
+              font-size: 12px; color: #ccc; }
+    .legend-dot { width: 12px; height: 12px; border-radius: 50%;
+                  display: inline-block; margin-right: 5px; vertical-align: middle; }
+
+    #btn-bar { width: 100%; display: flex; justify-content: center;
+               gap: 10px; padding: 12px 16px;
+               background: rgba(19,0,47,0.95); flex-wrap: wrap; }
+    #btn-bar button { padding: 10px 18px; font-size: 14px; font-weight: 500;
+                      border: none; border-radius: 8px; cursor: pointer; }
+    #btn-capture   { background: #4CAF50; color: white; }
+    #btn-retake    { background: #888;    color: white; }
+    #btn-measure   { background: #FF9800; color: white; }
+    #btn-debug     { background: #9C27B0; color: white; }
+    #btn-test-boxes{ background: #2196F3; color: white; }
+
+    #yolo-result {
       width: 100%; background: rgba(255,255,255,0.08);
       border-top: 1px solid rgba(255,255,255,0.15);
-      padding: 14px 20px; display: none;
-      text-align: center;
+      padding: 14px 20px; display: none; text-align: center;
     }
-    #result h3 { font-size: 16px; margin-bottom: 8px; color: #FF3FA6; }
-    .dim-row { font-size: 22px; font-weight: 500; margin: 4px 0; }
+    #yolo-result h3 { font-size: 16px; margin-bottom: 8px; color: #FF3FA6; }
+    .dim-row   { font-size: 22px; font-weight: 500; margin: 4px 0; }
     .dim-label { font-size: 12px; color: #aaa; margin-bottom: 10px; }
-    #conf { font-size: 12px; color: #888; }
+    #conf      { font-size: 12px; color: #888; }
+    #cabin-check { padding: 6px 12px; border-radius: 8px; display: inline-block;
+                   margin-top: 6px; font-weight: bold; }
 
-    #instr {
-      font-size: 12px; color: #ccc; text-align: center;
-      padding: 4px 16px 0; min-height: 18px;
-    }
-    #legend {
-      display: flex;
-      gap: 16px;
-      padding: 6px 16px;
-      font-size: 12px;
-      color: #ccc;
-    }
-    .legend-dot {
-      width: 12px;
-      height: 12px;
-      border-radius: 50%;
-      display: inline-block;
-      margin-right: 5px;
-      vertical-align: middle;
-    }
-    #cabin-check {
-      padding: 6px 12px;
-      border-radius: 8px;
-      display: inline-block;
-      margin-top: 6px;
-      font-weight: bold;
-    }
-
-    /* ── Debug panel ─────────────────────────────────────────── */
-    #debug-panel {
-      display: none;
-      width: 100%;
-      background: rgba(0,0,0,0.85);
-      border-top: 1px solid #444;
-      padding: 10px 14px;
-      font-size: 11px;
-      font-family: monospace;
-      color: #0f0;
-      max-height: 220px;
-      overflow-y: auto;
-    }
+    #debug-panel { display: none; width: 100%; background: rgba(0,0,0,0.85);
+                   border-top: 1px solid #444; padding: 10px 14px;
+                   font-size: 11px; font-family: monospace; color: #0f0;
+                   max-height: 220px; overflow-y: auto; }
     #debug-panel.visible { display: block; }
-    .debug-line { margin: 2px 0; }
+    .debug-line  { margin: 2px 0; }
     .debug-warn  { color: #FFD600; }
     .debug-error { color: #FF5555; }
     .debug-ok    { color: #00FF99; }
     .debug-info  { color: #00E5FF; }
+
+    /* ── Mode AR ──────────────────────────────────────────────── */
+    /* Le canvas THREE.js est injecté en position fixe, plein écran */
+    #ar-canvas-container canvas {
+      position: fixed; top: 0; left: 0;
+      width: 100vw !important; height: 100vh !important;
+      z-index: 10;
+    }
+
+    /* Dom-overlay : UI par-dessus le flux AR */
+    #ar-overlay {
+      display: none;
+      position: fixed; inset: 0; z-index: 20;
+      pointer-events: none; /* pass-through sauf éléments actifs */
+    }
+
+    /* Zone de tap transparent plein écran */
+    #ar-tap-area {
+      position: absolute; inset: 0;
+      pointer-events: auto;
+      background: transparent;
+      cursor: crosshair;
+    }
+
+    /* Réticule CSS au centre */
+    #ar-reticle-css {
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      width: 50px; height: 50px;
+      pointer-events: none;
+    }
+    #ar-reticle-css::before, #ar-reticle-css::after {
+      content: ''; position: absolute;
+      background: white;
+    }
+    /* croix horizontale */
+    #ar-reticle-css::before {
+      width: 100%; height: 2px;
+      top: 50%; left: 0; transform: translateY(-50%);
+    }
+    /* croix verticale */
+    #ar-reticle-css::after {
+      width: 2px; height: 100%;
+      left: 50%; top: 0; transform: translateX(-50%);
+    }
+    .reticle-ring {
+      position: absolute; inset: 0;
+      border: 2px solid white; border-radius: 50%;
+      opacity: 0.5;
+    }
+
+    /* Panneau d'instruction en haut */
+    #ar-top {
+      position: absolute; top: 0; left: 0; right: 0;
+      padding: 14px 16px;
+      background: linear-gradient(to bottom, rgba(0,0,0,0.7), transparent);
+      pointer-events: none;
+      display: flex; flex-direction: column; align-items: center; gap: 6px;
+    }
+    #ar-step-indicator {
+      display: flex; gap: 8px;
+    }
+    .ar-step-dot {
+      width: 10px; height: 10px; border-radius: 50%;
+      background: rgba(255,255,255,0.3);
+      transition: background 0.3s;
+    }
+    .ar-step-dot.done   { background: #00FF99; }
+    .ar-step-dot.active { background: white; }
+    #ar-instr {
+      font-size: 14px; font-weight: 600; text-align: center;
+      color: white; text-shadow: 0 1px 4px rgba(0,0,0,0.8);
+    }
+    #ar-sub {
+      font-size: 11px; color: #ccc; text-align: center;
+    }
+
+    /* Panneau résultat en bas */
+    #ar-bottom {
+      position: absolute; bottom: 0; left: 0; right: 0;
+      padding: 16px; pointer-events: auto;
+      background: linear-gradient(to top, rgba(19,0,47,0.95), transparent);
+    }
+    #ar-result-panel {
+      display: none;
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 12px; padding: 14px; text-align: center;
+    }
+    #ar-dims { font-size: 26px; font-weight: 600; margin: 4px 0; }
+    #ar-cabin {
+      padding: 6px 12px; border-radius: 8px;
+      display: inline-block; margin-top: 6px;
+      font-weight: bold; font-size: 14px;
+    }
+    #ar-btn-row {
+      display: flex; gap: 10px; justify-content: center; margin-top: 12px;
+      flex-wrap: wrap;
+    }
+    #ar-btn-reset  { background: #888; color: white; border: none;
+                     border-radius: 8px; padding: 10px 18px; font-size: 14px;
+                     cursor: pointer; pointer-events: auto; }
+    #ar-btn-exit   { background: #B71C1C; color: white; border: none;
+                     border-radius: 8px; padding: 10px 18px; font-size: 14px;
+                     cursor: pointer; pointer-events: auto; }
+
+    /* Points placés : canvas 2D par-dessus pour dessiner les traits */
+    #ar-points-canvas {
+      position: absolute; inset: 0;
+      pointer-events: none;
+    }
+
+    /* Info distance flottante sur les segments */
+    .ar-dist-label {
+      position: absolute;
+      background: rgba(0,0,0,0.7);
+      color: white; font-size: 13px; font-weight: 600;
+      padding: 2px 8px; border-radius: 8px;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+    }
   </style>
 </head>
 <body>
 
-<h2>Mesure Bagage</h2>
-<div id="status">Chargement du modèle...</div>
-<div id="instr"></div>
+<!-- ══════════════════════════════════════════════════════════════
+     ÉCRAN D'ACCUEIL
+══════════════════════════════════════════════════════════════ -->
+<div id="screen-home">
+  <div style="font-size:48px">🧳</div>
+  <h1>Mesure Bagage</h1>
+  <p>Mesurez votre valise ou sac à dos pour vérifier qu'il passe en cabine.</p>
 
-<div id="container" style="height: 55vh;">
-  <video id="video" autoplay muted playsinline></video>
-  <canvas id="canvas-live"></canvas>
-  <canvas id="canvas-photo"></canvas>
-</div>
-<div id="legend">
-  <span><span class="legend-dot" style="background:#00E5FF;"></span>Objet à mesurer</span>
-  <span><span class="legend-dot" style="background:#FF3FA6;"></span>Référence (ballon ⚽)</span>
-</div>
-<div id="btn-bar">
-  <button id="btn-capture"    onclick="capturePhoto()">📸 Capturer</button>
-  <button id="btn-retake"     onclick="retake()"          style="display:none">🔄 Reprendre</button>
-  <button id="btn-measure"    onclick="measure()"         style="display:none">📏 Mesurer</button>
-  <button id="btn-test-boxes" onclick="drawTestBoxes()"   style="display:none">🟦 Tester boîtes</button>
-  <button id="btn-debug"      onclick="toggleDebug()">🐛 Debug</button>
+  <button class="mode-btn" id="btn-start-ar" onclick="startAR()">
+    <span class="icon">🔮</span>
+    <span class="title">Mode AR</span>
+    <span class="sub">Sans objet de référence</span>
+    <span class="badge" id="ar-badge">Vérification en cours…</span>
+  </button>
+
+  <button class="mode-btn" id="btn-start-yolo" onclick="startYOLO()">
+    <span class="icon">📸</span>
+    <span class="title">Mode Photo</span>
+    <span class="sub">Avec ballon ⚽ comme référence</span>
+    <span class="badge">Tous appareils</span>
+  </button>
+
+  <div id="ar-not-supported" style="display:none">
+    ⚠️ AR non disponible sur cet appareil.<br>
+    WebXR AR nécessite <strong>Android + Chrome</strong>.<br>
+    Utilisez le Mode Photo.
+  </div>
 </div>
 
-<div id="result">
-  <h3 id="res-class"></h3>
-  <div class="dim-row" id="res-dims"></div>
-  <div class="dim-label">largeur × hauteur (cm)</div>
-  <div id="cabin-check" style="font-size:18px; margin-top:8px;"></div>
-  <div id="conf"></div>
+<!-- ══════════════════════════════════════════════════════════════
+     MODE AR — Container canvas THREE.js (injecté dynamiquement)
+══════════════════════════════════════════════════════════════ -->
+<div id="ar-canvas-container"></div>
+
+<!-- ══════════════════════════════════════════════════════════════
+     MODE AR — Dom-overlay (UI par-dessus le flux caméra AR)
+══════════════════════════════════════════════════════════════ -->
+<div id="ar-overlay">
+
+  <!-- Zone de tap plein écran -->
+  <div id="ar-tap-area" onclick="arPlacePoint()"></div>
+
+  <!-- Réticule CSS au centre -->
+  <div id="ar-reticle-css">
+    <div class="reticle-ring"></div>
+  </div>
+
+  <!-- Canvas 2D pour dessiner les segments et labels -->
+  <canvas id="ar-points-canvas"></canvas>
+
+  <!-- Panneau haut : instructions -->
+  <div id="ar-top">
+    <div id="ar-step-indicator">
+      <div class="ar-step-dot active" id="dot-0"></div>
+      <div class="ar-step-dot"        id="dot-1"></div>
+      <div class="ar-step-dot"        id="dot-2"></div>
+    </div>
+    <div id="ar-instr">Cherche la surface…</div>
+    <div id="ar-sub">Déplace lentement ton téléphone</div>
+  </div>
+
+  <!-- Panneau bas : résultat + boutons -->
+  <div id="ar-bottom">
+    <div id="ar-result-panel">
+      <div style="font-size:13px;color:#aaa;margin-bottom:4px" id="ar-res-class">Valise</div>
+      <div id="ar-dims">— × —</div>
+      <div style="font-size:12px;color:#aaa">largeur × hauteur (cm)</div>
+      <div id="ar-cabin"></div>
+    </div>
+    <div id="ar-btn-row">
+      <button id="ar-btn-reset" onclick="arReset()" style="display:none">🔄 Recommencer</button>
+      <button id="ar-btn-exit"  onclick="arExit()">✖ Quitter AR</button>
+    </div>
+  </div>
+
 </div>
 
-<!-- ── Debug panel ──────────────────────────────────────── -->
-<div id="debug-panel"></div>
+<!-- ══════════════════════════════════════════════════════════════
+     MODE YOLO
+══════════════════════════════════════════════════════════════ -->
+<div id="yolo-ui">
 
+  <div id="yolo-header">
+    <button id="btn-back-home" onclick="goHome()">← Accueil</button>
+    <h2>Mode Photo 📸</h2>
+    <button id="btn-debug" onclick="toggleDebug()">🐛</button>
+  </div>
+
+  <div id="status">Chargement du modèle…</div>
+  <div id="instr"></div>
+
+  <div id="container">
+    <video id="video" autoplay muted playsinline></video>
+    <canvas id="canvas-live"></canvas>
+    <canvas id="canvas-photo" style="display:none"></canvas>
+  </div>
+
+  <div id="legend">
+    <span><span class="legend-dot" style="background:#00E5FF;"></span>Objet à mesurer</span>
+    <span><span class="legend-dot" style="background:#FF3FA6;"></span>Référence (ballon ⚽)</span>
+  </div>
+
+  <div id="btn-bar">
+    <button id="btn-capture"    onclick="capturePhoto()">📸 Capturer</button>
+    <button id="btn-retake"     onclick="retake()"         style="display:none">🔄 Reprendre</button>
+    <button id="btn-measure"    onclick="measure()"        style="display:none">📏 Mesurer</button>
+    <button id="btn-test-boxes" onclick="drawTestBoxes()"  style="display:none">🟦 Tester boîtes</button>
+  </div>
+
+  <div id="yolo-result">
+    <h3 id="res-class"></h3>
+    <div class="dim-row" id="res-dims"></div>
+    <div class="dim-label">largeur × hauteur (cm)</div>
+    <div id="cabin-check" style="font-size:18px;margin-top:8px;"></div>
+    <div id="conf"></div>
+  </div>
+
+  <div id="debug-panel"></div>
+
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════
+     SCRIPT
+══════════════════════════════════════════════════════════════ -->
 <script>
-// ── Utilitaire de log debug ───────────────────────────────────
-const debugLines = [];
-function dlog(msg, cls = '') {
-  console.log(msg);
-  debugLines.push(`<div class="debug-line ${cls}">${msg}</div>`);
-  const panel = document.getElementById('debug-panel');
-  if (panel.classList.contains('visible')) {
-    panel.innerHTML = debugLines.join('');
-    panel.scrollTop = panel.scrollHeight;
+
+// ════════════════════════════════════════════════════════════════
+// CONSTANTES PARTAGÉES
+// ════════════════════════════════════════════════════════════════
+const CABIN_MAX_W_CM = 55;
+const CABIN_MAX_H_CM = 35;
+
+// ════════════════════════════════════════════════════════════════
+// NAVIGATION
+// ════════════════════════════════════════════════════════════════
+function goHome() {
+  // Stop YOLO si actif
+  if (yoloAnimId) cancelAnimationFrame(yoloAnimId);
+  if (yoloVideo && yoloVideo.srcObject)
+    yoloVideo.srcObject.getTracks().forEach(t => t.stop());
+  document.getElementById('yolo-ui').style.display        = 'none';
+  document.getElementById('screen-home').style.display    = 'flex';
+}
+
+// ════════════════════════════════════════════════════════════════
+// VÉRIFICATION SUPPORT AR
+// ════════════════════════════════════════════════════════════════
+async function checkARSupport() {
+  const badge  = document.getElementById('ar-badge');
+  const msgDiv = document.getElementById('ar-not-supported');
+  const arBtn  = document.getElementById('btn-start-ar');
+  try {
+    if (navigator.xr && await navigator.xr.isSessionSupported('immersive-ar')) {
+      badge.textContent = '✅ Disponible sur cet appareil';
+    } else {
+      badge.textContent    = '❌ Non disponible (Android Chrome requis)';
+      arBtn.style.opacity  = '0.4';
+      arBtn.style.cursor   = 'not-allowed';
+      arBtn.onclick        = () => msgDiv.style.display = 'block';
+      msgDiv.style.display = 'block';
+    }
+  } catch(e) {
+    badge.textContent    = '❌ Non disponible';
+    arBtn.style.opacity  = '0.4';
+    arBtn.style.cursor   = 'not-allowed';
+    arBtn.onclick        = () => msgDiv.style.display = 'block';
   }
 }
-function toggleDebug() {
-  const panel = document.getElementById('debug-panel');
-  panel.classList.toggle('visible');
-  if (panel.classList.contains('visible')) {
-    panel.innerHTML = debugLines.join('');
-    panel.scrollTop = panel.scrollHeight;
+checkARSupport();
+
+
+// ════════════════════════════════════════════════════════════════
+// ██████████████  MODE AR  ██████████████
+// ════════════════════════════════════════════════════════════════
+let arScene, arCamera, arRenderer, arReticle;
+let arSession    = null;
+let arHitTestSrc = null;
+let arRefSpace   = null;
+let arLastHit    = null;   // dernier XRHitTestResult
+let arPoints     = [];     // positions 3D placées [{x,y,z}]
+let arMarkers    = [];     // THREE.Mesh sphères
+
+// Instructions par étape
+const AR_STEPS = [
+  { instr: '1/3 — Pointe vers le coin bas-gauche de la valise', sub: 'Puis tape n\'importe où sur l\'écran' },
+  { instr: '2/3 — Pointe vers le coin bas-droit de la valise',  sub: 'Tape pour valider — largeur sera calculée' },
+  { instr: '3/3 — Pointe vers le coin haut-droit de la valise', sub: 'Tape pour valider — hauteur sera calculée' },
+];
+
+async function startAR() {
+  if (!navigator.xr) return;
+  document.getElementById('screen-home').style.display = 'none';
+
+  // ── Renderer THREE.js ──────────────────────────────────────
+  arRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  arRenderer.setPixelRatio(window.devicePixelRatio);
+  arRenderer.setSize(window.innerWidth, window.innerHeight);
+  arRenderer.xr.enabled = true;
+  document.getElementById('ar-canvas-container').appendChild(arRenderer.domElement);
+
+  // ── Scène ──────────────────────────────────────────────────
+  arScene  = new THREE.Scene();
+  arCamera = new THREE.PerspectiveCamera();
+  arScene.add(arCamera);
+
+  // Lumière douce pour les sphères
+  arScene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 1));
+
+  // ── Réticule 3D (anneau sur le sol) ───────────────────────
+  const rGeo = new THREE.RingGeometry(0.04, 0.06, 32).rotateX(-Math.PI / 2);
+  const rMat = new THREE.MeshBasicMaterial({ color: 0xFFFFFF, side: THREE.DoubleSide });
+  arReticle = new THREE.Mesh(rGeo, rMat);
+  arReticle.matrixAutoUpdate = false;
+  arReticle.visible = false;
+  arScene.add(arReticle);
+
+  // ── Session WebXR ──────────────────────────────────────────
+  try {
+    arSession = await navigator.xr.requestSession('immersive-ar', {
+      requiredFeatures : ['local', 'hit-test'],
+      optionalFeatures : ['dom-overlay'],
+      domOverlay       : { root: document.getElementById('ar-overlay') }
+    });
+  } catch(e) {
+    alert('Impossible de démarrer la session AR : ' + e);
+    arExit(); return;
+  }
+
+  arRenderer.xr.setReferenceSpaceType('local');
+  await arRenderer.xr.setSession(arSession);
+  arRefSpace = await arSession.requestReferenceSpace('local');
+
+  // ── Source de hit-test (depuis le viewer = centre écran) ───
+  const viewerSpace = await arSession.requestReferenceSpace('viewer');
+  arHitTestSrc = await arSession.requestHitTestSource({ space: viewerSpace });
+
+  // ── Affiche l'overlay DOM ──────────────────────────────────
+  document.getElementById('ar-overlay').style.display = 'block';
+  arUpdateStep(0);
+
+  // ── Boucle de rendu ────────────────────────────────────────
+  arRenderer.setAnimationLoop((timestamp, frame) => {
+    if (!frame) return;
+    const results = frame.getHitTestResults(arHitTestSrc);
+    if (results.length > 0) {
+      arLastHit = results[0];
+      const pose = arLastHit.getPose(arRefSpace);
+      arReticle.visible = true;
+      arReticle.matrix.fromArray(pose.transform.matrix);
+      // Met à jour le réticule CSS : toujours au centre donc rien à faire
+    } else {
+      arLastHit = null;
+      arReticle.visible = false;
+    }
+    arRenderer.render(arScene, arCamera);
+    arDrawOverlay2D();
+  });
+
+  arSession.addEventListener('end', () => { arExit(true); });
+}
+
+// ── Place un point au réticule ────────────────────────────────
+function arPlacePoint() {
+  if (arPoints.length >= 3) return; // mesure terminée, attendre reset
+  if (!arLastHit) {
+    arSetInstr('Aucune surface détectée — bouge lentement le téléphone', '#FFD600');
+    return;
+  }
+  const pose = arLastHit.getPose(arRefSpace);
+  const m    = pose.transform.matrix; // Float32Array[16]
+  // Position = colonne 3 de la matrice 4×4
+  const pos  = { x: m[12], y: m[13], z: m[14] };
+  arPoints.push(pos);
+
+  // ── Sphère marqueur ────────────────────────────────────────
+  const color  = arPoints.length === 3 ? 0x00E5FF : 0xFF3FA6;
+  const sphere = new THREE.Mesh(
+    new THREE.SphereGeometry(0.02, 16, 16),
+    new THREE.MeshPhongMaterial({ color })
+  );
+  sphere.position.set(pos.x, pos.y, pos.z);
+  arScene.add(sphere);
+  arMarkers.push(sphere);
+
+  // ── Ligne entre points consécutifs ─────────────────────────
+  if (arPoints.length >= 2) {
+    const prev = arPoints[arPoints.length - 2];
+    const cur  = arPoints[arPoints.length - 1];
+    const lGeo = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(prev.x, prev.y, prev.z),
+      new THREE.Vector3(cur.x,  cur.y,  cur.z)
+    ]);
+    const line = new THREE.Line(lGeo, new THREE.LineBasicMaterial({ color: 0xFFFFFF, linewidth: 3 }));
+    arScene.add(line);
+    arMarkers.push(line);
+  }
+
+  // ── Mise à jour UI ────────────────────────────────────────
+  arUpdateDots(arPoints.length);
+
+  if (arPoints.length === 1) {
+    arUpdateStep(1);
+  } else if (arPoints.length === 2) {
+    const largeur = arDist3D(arPoints[0], arPoints[1]) * 100;
+    arSetInstr(`Largeur : ${largeur.toFixed(1)} cm — Pointe maintenant vers le coin haut-droit`, '#00FF99');
+    document.getElementById('ar-sub').textContent = 'Tape pour valider la hauteur';
+  } else if (arPoints.length === 3) {
+    arFinish();
   }
 }
+
+// ── Calcule et affiche le résultat final ──────────────────────
+function arFinish() {
+  const [P1, P2, P3] = arPoints;
+  const largCm = (arDist3D(P1, P2) * 100).toFixed(1);
+  const hautCm = (arDist3D(P2, P3) * 100).toFixed(1);
+
+  const fits = largCm <= CABIN_MAX_W_CM && hautCm <= CABIN_MAX_H_CM;
+
+  document.getElementById('ar-dims').textContent = `${largCm} × ${hautCm}`;
+  const cabDiv = document.getElementById('ar-cabin');
+  if (fits) {
+    cabDiv.textContent         = '✅ Accepté comme bagage cabine';
+    cabDiv.style.background    = 'rgba(0,255,100,0.15)';
+    cabDiv.style.color         = '#00FF99';
+  } else {
+    cabDiv.textContent         = '❌ Trop grand pour la cabine';
+    cabDiv.style.background    = 'rgba(255,60,60,0.15)';
+    cabDiv.style.color         = '#FF5555';
+  }
+
+  document.getElementById('ar-result-panel').style.display = 'block';
+  document.getElementById('ar-btn-reset').style.display    = 'inline-block';
+
+  // Désactive le tap pour ne pas ajouter de points
+  document.getElementById('ar-tap-area').onclick = null;
+
+  arSetInstr(`📏 ${largCm} cm × ${hautCm} cm`, fits ? '#00FF99' : '#FF5555');
+  document.getElementById('ar-sub').textContent = 'Appuie sur "Recommencer" pour une nouvelle mesure';
+}
+
+// ── Reset mesure ──────────────────────────────────────────────
+function arReset() {
+  // Supprime les sphères et lignes de la scène
+  arMarkers.forEach(m => arScene.remove(m));
+  arMarkers = [];
+  arPoints  = [];
+  arLastHit = null;
+
+  document.getElementById('ar-result-panel').style.display = 'none';
+  document.getElementById('ar-btn-reset').style.display    = 'none';
+  document.getElementById('ar-tap-area').onclick            = arPlacePoint;
+
+  arUpdateDots(0);
+  arUpdateStep(0);
+
+  // Vide le canvas 2D de l'overlay
+  const c = document.getElementById('ar-points-canvas');
+  c.getContext('2d').clearRect(0, 0, c.width, c.height);
+}
+
+// ── Quitter le mode AR ────────────────────────────────────────
+async function arExit(fromEvent = false) {
+  if (arSession && !fromEvent) {
+    try { await arSession.end(); } catch(e) {}
+  }
+  arSession    = null;
+  arHitTestSrc = null;
+  arPoints     = [];
+  arMarkers    = [];
+  if (arRenderer) {
+    arRenderer.setAnimationLoop(null);
+    arRenderer.dispose();
+    const c = document.getElementById('ar-canvas-container');
+    c.innerHTML = '';
+  }
+  document.getElementById('ar-overlay').style.display = 'none';
+  document.getElementById('screen-home').style.display = 'flex';
+}
+
+// ── Dessin 2D overlay (projeter les points sur le canvas 2D) ──
+function arDrawOverlay2D() {
+  const canvas = document.getElementById('ar-points-canvas');
+  const W = window.innerWidth, H = window.innerHeight;
+  if (canvas.width !== W || canvas.height !== H) {
+    canvas.width = W; canvas.height = H;
+  }
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, W, H);
+  if (arPoints.length < 2) return;
+
+  // Projette les points 3D en 2D via la caméra THREE.js
+  const proj2D = arPoints.map(p => {
+    const v = new THREE.Vector3(p.x, p.y, p.z);
+    v.project(arCamera);   // NDC [-1, 1]
+    return {
+      x: (v.x + 1) * 0.5 * W,
+      y: (1 - v.y) * 0.5 * H
+    };
+  });
+
+  // Dessine les segments avec distance
+  ctx.lineWidth   = 3;
+  ctx.strokeStyle = 'white';
+  ctx.setLineDash([6, 4]);
+
+  for (let i = 0; i < proj2D.length - 1; i++) {
+    const a = proj2D[i], b = proj2D[i + 1];
+    const dist = (arDist3D(arPoints[i], arPoints[i + 1]) * 100).toFixed(1);
+
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+
+    // Label distance au milieu du segment
+    const mx = (a.x + b.x) / 2;
+    const my = (a.y + b.y) / 2;
+    ctx.setLineDash([]);
+    ctx.font         = 'bold 14px sans-serif';
+    ctx.fillStyle    = 'rgba(0,0,0,0.6)';
+    const label      = `${dist} cm`;
+    const tw         = ctx.measureText(label).width;
+    ctx.fillRect(mx - tw/2 - 6, my - 12, tw + 12, 20);
+    ctx.fillStyle = 'white';
+    ctx.fillText(label, mx - tw/2, my + 2);
+    ctx.setLineDash([6, 4]);
+  }
+
+  // Cercles sur les points placés
+  ctx.setLineDash([]);
+  proj2D.forEach((p, i) => {
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 10, 0, Math.PI * 2);
+    ctx.fillStyle = i === 2 ? '#00E5FF' : '#FF3FA6';
+    ctx.fill();
+    ctx.strokeStyle = 'white';
+    ctx.lineWidth   = 2;
+    ctx.stroke();
+  });
+}
+
+// ── Utilitaires AR ────────────────────────────────────────────
+function arDist3D(a, b) {
+  return Math.sqrt((a.x-b.x)**2 + (a.y-b.y)**2 + (a.z-b.z)**2);
+}
+
+function arSetInstr(txt, color = 'white') {
+  const d = document.getElementById('ar-instr');
+  d.textContent  = txt;
+  d.style.color  = color;
+}
+
+function arUpdateStep(step) {
+  if (step < AR_STEPS.length) {
+    document.getElementById('ar-instr').textContent = AR_STEPS[step].instr;
+    document.getElementById('ar-instr').style.color = 'white';
+    document.getElementById('ar-sub').textContent   = AR_STEPS[step].sub;
+  }
+}
+
+function arUpdateDots(filled) {
+  for (let i = 0; i < 3; i++) {
+    const dot = document.getElementById(`dot-${i}`);
+    dot.classList.remove('done', 'active');
+    if (i < filled)         dot.classList.add('done');
+    else if (i === filled)  dot.classList.add('active');
+  }
+}
+
+
+// ════════════════════════════════════════════════════════════════
+// ██████████████  MODE YOLO (Photo)  ██████████████
+// ════════════════════════════════════════════════════════════════
 
 // ── Constantes ────────────────────────────────────────────────
 const TARGET_CLASSES = [24, 28, 32, 72];
@@ -156,431 +711,321 @@ const CLASS_INFO = {
   32: { label: 'Ballon de foot', color: '#FF3FA6' },
   72: { label: 'Valise',         color: '#00E5FF' }  // frigo = alias valise
 };
-const BALL_D_MM   = 220.0;
-const CABIN_MAX_W_CM = 55;
-const CABIN_MAX_H_CM = 35;
+const BALL_D_MM      = 220.0;
+const SCORE_THRESHOLD = 0.05;
 
 // ── État ──────────────────────────────────────────────────────
-let model, animId;
-let lastDetections = [];
-let photoImg = null;
-let bagBox   = null;
-let ballBox  = null;
-let detectionBoxes = [];
+let yoloModel, yoloAnimId;
+let yoloLastDetections = [];
+let yoloPhotoImg       = null;
+let yoloBagBox         = null;
+let yoloBallBox        = null;
+let yoloDetBoxes       = [];
 
-const video       = document.getElementById('video');
-const canvasLive  = document.getElementById('canvas-live');
-const canvasPhoto = document.getElementById('canvas-photo');
-const ctxLive     = canvasLive.getContext('2d');
-const ctxPhoto    = canvasPhoto.getContext('2d');
-const statusDiv   = document.getElementById('status');
-const instrDiv    = document.getElementById('instr');
+const debugLines = [];
+function dlog(msg, cls = '') {
+  console.log(msg);
+  debugLines.push(`<div class="debug-line ${cls}">${msg}</div>`);
+  const panel = document.getElementById('debug-panel');
+  if (panel && panel.classList.contains('visible')) {
+    panel.innerHTML  = debugLines.join('');
+    panel.scrollTop  = panel.scrollHeight;
+  }
+}
+function toggleDebug() {
+  const p = document.getElementById('debug-panel');
+  p.classList.toggle('visible');
+  if (p.classList.contains('visible')) {
+    p.innerHTML = debugLines.join('');
+    p.scrollTop = p.scrollHeight;
+  }
+}
+
+let yoloVideo, yoloCanvasLive, yoloCanvasPhoto, yoloCtxLive, yoloCtxPhoto;
+let yoloStatusDiv, yoloInstrDiv;
+
+function initYoloRefs() {
+  yoloVideo       = document.getElementById('video');
+  yoloCanvasLive  = document.getElementById('canvas-live');
+  yoloCanvasPhoto = document.getElementById('canvas-photo');
+  yoloCtxLive     = yoloCanvasLive.getContext('2d');
+  yoloCtxPhoto    = yoloCanvasPhoto.getContext('2d');
+  yoloStatusDiv   = document.getElementById('status');
+  yoloInstrDiv    = document.getElementById('instr');
+}
+
+async function startYOLO() {
+  document.getElementById('screen-home').style.display = 'none';
+  document.getElementById('yolo-ui').style.display     = 'flex';
+  initYoloRefs();
+  await yoloSetupCamera();
+  await yoloLoadModel();
+}
 
 // ── Caméra ────────────────────────────────────────────────────
-async function setupCamera() {
+async function yoloSetupCamera() {
   const stream = await navigator.mediaDevices.getUserMedia({
     video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
     audio: false
   });
-  video.srcObject = stream;
-  return new Promise(r => video.onloadedmetadata = r);
+  yoloVideo.srcObject = stream;
+  return new Promise(r => yoloVideo.onloadedmetadata = r);
 }
 
-// ── Chargement du modèle ──────────────────────────────────────
-async function loadModel() {
+// ── Modèle ────────────────────────────────────────────────────
+async function yoloLoadModel() {
   try {
-    dlog('⏳ Chargement modèle depuis ./model/model.json ...', 'debug-info');
-    model = await tf.loadGraphModel('./model/model.json');
+    dlog('⏳ Chargement modèle depuis ./model/model.json …', 'debug-info');
+    yoloModel = await tf.loadGraphModel('./model/model.json');
     dlog('✅ Modèle chargé !', 'debug-ok');
-
-    // Affiche la signature du modèle pour vérifier les entrées/sorties
-    dlog(`📐 Inputs  : ${JSON.stringify(model.inputs  ? model.inputs.map(i=>({name:i.name,shape:i.shape}))  : 'n/a')}`, 'debug-info');
-    dlog(`📐 Outputs : ${JSON.stringify(model.outputs ? model.outputs.map(o=>({name:o.name,shape:o.shape})) : 'n/a')}`, 'debug-info');
-
-    statusDiv.textContent = 'Modèle prêt — pointe vers ton bagage';
-    instrDiv.textContent  = 'Place le ballon ⚽ à côté du bagage puis capture';
-    detectLoop();
+    dlog(`📐 Inputs  : ${JSON.stringify(yoloModel.inputs  ? yoloModel.inputs.map(i=>({name:i.name,shape:i.shape}))  : 'n/a')}`, 'debug-info');
+    dlog(`📐 Outputs : ${JSON.stringify(yoloModel.outputs ? yoloModel.outputs.map(o=>({name:o.name,shape:o.shape})) : 'n/a')}`, 'debug-info');
+    yoloStatusDiv.textContent = 'Modèle prêt — pointe vers ton bagage';
+    yoloInstrDiv.textContent  = 'Place le ballon ⚽ à côté du bagage puis capture';
+    yoloDetectLoop();
   } catch(e) {
     dlog('❌ Erreur chargement : ' + e, 'debug-error');
-    statusDiv.textContent = 'Erreur chargement modèle : ' + e;
+    yoloStatusDiv.textContent = 'Erreur chargement modèle : ' + e;
   }
 }
 
-// ── Parsing YOLO avec détection automatique du format ─────────
+// ── Parsing YOLO (détection auto du format) ───────────────────
 async function parseYOLO(rawOutput) {
-  /*
-   * YOLOv8 TF.js peut sortir différentes formes selon l'export :
-   *   A) [1, 84, 8400]  → il faut transposer → [1, 8400, 84]
-   *   B) [1, 8400, 84]  → déjà correct, pas de transposition
-   *
-   * Les 84 colonnes = 4 coords (cx,cy,w,h) + 80 scores de classes
-   */
   let tensor = rawOutput;
-
-  // Si c'est un tableau, prendre le premier élément
   if (Array.isArray(tensor)) {
-    dlog(`⚠️ La sortie est un Array de ${tensor.length} éléments, utilisation de [0]`, 'debug-warn');
+    dlog(`⚠️ Sortie Array[${tensor.length}], prise de [0]`, 'debug-warn');
     tensor = tensor[0];
   }
-  // Si c'est un objet (dict), prendre la première clé
   if (!(tensor instanceof tf.Tensor)) {
     const keys = Object.keys(tensor);
-    dlog(`⚠️ La sortie est un objet, clés: ${keys.join(', ')}`, 'debug-warn');
+    dlog(`⚠️ Sortie objet, clés: ${keys.join(', ')}`, 'debug-warn');
     tensor = tensor[keys[0]];
   }
-
-  const shape = tensor.shape; // ex: [1, 84, 8400] ou [1, 8400, 84]
-  dlog(`🔍 Forme brute sortie : [${shape}]`, 'debug-info');
-
+  const shape = tensor.shape;
+  dlog(`🔍 Forme sortie : [${shape}]`, 'debug-info');
   let res;
-  // Détection automatique du format
-  if (shape.length === 3 && shape[1] === 84) {
-    // Format A : [1, 84, 8400] → transposer
-    dlog('📊 Format A détecté [1,84,8400] → transposition', 'debug-info');
-    res = tensor.transpose([0, 2, 1]).squeeze(); // → [8400, 84]
-  } else if (shape.length === 3 && shape[2] === 84) {
-    // Format B : [1, 8400, 84] → pas de transposition
-    dlog('📊 Format B détecté [1,8400,84] → squeeze direct', 'debug-info');
-    res = tensor.squeeze(); // → [8400, 84]
-  } else {
-    // Format inconnu, tentative générique
-    dlog(`⚠️ Format inconnu [${shape}], tentative avec transpose+squeeze`, 'debug-warn');
-    try {
-      res = tensor.transpose([0, 2, 1]).squeeze();
-    } catch {
-      res = tensor.squeeze();
-    }
-    dlog(`   Forme après traitement : [${res.shape}]`, 'debug-warn');
+  if      (shape.length === 3 && shape[1] === 84) { dlog('📊 Format A [1,84,8400]', 'debug-info');  res = tensor.transpose([0,2,1]).squeeze(); }
+  else if (shape.length === 3 && shape[2] === 84) { dlog('📊 Format B [1,8400,84]', 'debug-info');  res = tensor.squeeze(); }
+  else {
+    dlog(`⚠️ Format inconnu [${shape}]`, 'debug-warn');
+    try { res = tensor.transpose([0,2,1]).squeeze(); } catch { res = tensor.squeeze(); }
   }
 
-  const rawBoxes  = res.slice([0, 0], [-1, 4]);   // cx, cy, w, h
-  const rawScores = res.slice([0, 4], [-1, 80]);   // 80 classes COCO
-
+  const rawBoxes  = res.slice([0,0], [-1,4]);
+  const rawScores = res.slice([0,4], [-1,80]);
   const maxScores = rawScores.max(1);
   const classIdx  = rawScores.argMax(1).dataSync();
-
-  // ── DEBUG : top 5 scores toutes classes confondues ────────
-  const allScores = await maxScores.data();
-  const top5 = Array.from(allScores)
-    .map((s, i) => ({ s, i }))
-    .sort((a, b) => b.s - a.s)
-    .slice(0, 5);
-  dlog(`🏆 Top 5 scores bruts : ${top5.map(x => `[${x.i}] cls=${classIdx[x.i]} s=${x.s.toFixed(3)}`).join(' | ')}`, 'debug-info');
-
-  // ── DEBUG : scores des classes qui nous intéressent ───────
-  const targetScores = Array.from(allScores)
-    .map((s, i) => ({ s, cls: classIdx[i] }))
-    .filter(x => TARGET_CLASSES.includes(x.cls));
-  const bestTargets = targetScores.sort((a, b) => b.s - a.s).slice(0, 3);
-  if (bestTargets.length > 0) {
-    dlog(`🎯 Meilleurs scores classes cibles (24,28,32) : ${bestTargets.map(x=>`cls=${x.cls} s=${x.s.toFixed(3)}`).join(' | ')}`, 'debug-ok');
-  } else {
-    dlog('⚠️ Aucune détection pour les classes 24/28/32 au-dessus de 0', 'debug-warn');
-  }
-
-  // ── Conversion des boîtes cx,cy,w,h → y1,x1,y2,x2 ────────
-  const [xc, yc, w, h] = tf.split(rawBoxes, 4, 1);
+  const [xc,yc,w,h] = tf.split(rawBoxes, 4, 1);
   const y1 = yc.sub(h.div(2)), x1 = xc.sub(w.div(2));
   const y2 = yc.add(h.div(2)), x2 = xc.add(w.div(2));
-  const boxes = tf.concat([y1, x1, y2, x2], 1);
-
-  // ── NMS avec seuil 0.05 ──────────────────────────────────
-  
-  let nmsIdx = await tf.image.nonMaxSuppressionAsync(boxes, maxScores, 10, 0.5, 0.05);
-  let idxArr = nmsIdx.arraySync();
+  const boxes  = tf.concat([y1,x1,y2,x2], 1);
+  const nmsIdx = await tf.image.nonMaxSuppressionAsync(boxes, maxScores, 10, 0.5, SCORE_THRESHOLD);
+  const idxArr = nmsIdx.arraySync();
   const boxArr = boxes.arraySync();
-  const scrArr = allScores;
+  const scrArr = maxScores.arraySync();
 
-  let dets = idxArr
+  const dets = idxArr
     .map(i => ({ box: boxArr[i], score: scrArr[i], cls: classIdx[i] }))
-    .filter(d => TARGET_CLASSES.includes(d.cls) && d.score > 0.05);
+    .filter(d => TARGET_CLASSES.includes(d.cls) && d.score > SCORE_THRESHOLD);
 
-  dlog(`🔎 Après NMS (seuil 0.05) : ${dets.length} détection(s) classes cibles`, dets.length > 0 ? 'debug-ok' : 'debug-warn');
-
-  if (dets.length === 0) {
-    idxArr = nmsIdx.arraySync();
-    dets = idxArr
-      .map(i => ({ box: boxArr[i], score: scrArr[i], cls: classIdx[i] }))
-  }
-
+  dlog(`🎯 Détections : ${dets.length}`, dets.length > 0 ? 'debug-ok' : 'debug-warn');
   return dets;
 }
 
-// ── Inférence sur une image (utilisée après capture) ─────────
-async function runInferenceOnPhoto() {
-  if (!model) { dlog('❌ Modèle non chargé', 'debug-error'); return []; }
-  dlog('🖼️ Inférence sur la photo figée...', 'debug-info');
-
-  return tf.tidy(() => {}) || await (async () => {
-    tf.engine().startScope();
-    try {
-      const img     = tf.browser.fromPixels(canvasPhoto);
-      const resized = tf.image.resizeBilinear(img, [640, 640]);
-      const input   = resized.div(255.0).expandDims(0);
-      dlog(`   Input tensor shape : [${input.shape}]`, 'debug-info');
-      const output = model.execute(input);
-      dlog(`   Output type : ${Array.isArray(output) ? 'Array' : output instanceof tf.Tensor ? 'Tensor' : typeof output}`, 'debug-info');
-      const dets = await parseYOLO(output);
-      return dets;
-    } catch(e) {
-      dlog('❌ Erreur inférence photo : ' + e, 'debug-error');
-      return [];
-    } finally {
-      tf.engine().endScope();
-    }
-  })();
-}
-
-// ── Détection en temps réel ───────────────────────────────────
-function detectLoop() {
-  canvasLive.width  = video.videoWidth  || 640;
-  canvasLive.height = video.videoHeight || 480;
-
+// ── Boucle temps réel ─────────────────────────────────────────
+function yoloDetectLoop() {
+  yoloCanvasLive.width  = yoloVideo.videoWidth  || 640;
+  yoloCanvasLive.height = yoloVideo.videoHeight || 480;
   async function frame() {
-    if (!model || video.paused || video.ended) { animId = requestAnimationFrame(frame); return; }
+    if (!yoloModel || yoloVideo.paused || yoloVideo.ended) { yoloAnimId = requestAnimationFrame(frame); return; }
     tf.engine().startScope();
     try {
-      const img     = tf.browser.fromPixels(video);
-      const resized = tf.image.resizeBilinear(img, [640, 640]);
+      const img     = tf.browser.fromPixels(yoloVideo);
+      const resized = tf.image.resizeBilinear(img, [640,640]);
       const input   = resized.div(255.0).expandDims(0);
-      const output  = model.execute(input);
+      const output  = yoloModel.execute(input);
       const dets    = await parseYOLO(output);
-      lastDetections = dets;
-      renderLive(dets);
-    } catch(e) { /* silencieux en boucle */ }
+      yoloLastDetections = dets;
+      yoloRenderLive(dets);
+    } catch(e) {}
     tf.engine().endScope();
-    animId = requestAnimationFrame(frame);
+    yoloAnimId = requestAnimationFrame(frame);
   }
-  animId = requestAnimationFrame(frame);
+  yoloAnimId = requestAnimationFrame(frame);
 }
 
-function renderLive(dets) {
-  ctxLive.clearRect(0, 0, canvasLive.width, canvasLive.height);
-  const sx = canvasLive.width  / 640;
-  const sy = canvasLive.height / 640;
+function yoloRenderLive(dets) {
+  yoloCtxLive.clearRect(0, 0, yoloCanvasLive.width, yoloCanvasLive.height);
+  const sx = yoloCanvasLive.width  / 640;
+  const sy = yoloCanvasLive.height / 640;
   const hasBall = dets.some(d => d.cls === 32);
-  const hasBag  = dets.some(d => [24, 28, 72].includes(d.cls));
+  const hasBag  = dets.some(d => [24,28,72].includes(d.cls));
   dets.forEach(d => {
-    let [y1, x1, y2, x2] = d.box;
-    x1 *= sx; x2 *= sx; y1 *= sy; y2 *= sy;
+    let [y1,x1,y2,x2] = d.box;
+    x1*=sx; x2*=sx; y1*=sy; y2*=sy;
     const info  = CLASS_INFO[d.cls];
-    const label = `${info.label} (${Math.round(d.score * 100)}%)`;
-    ctxLive.strokeStyle = info.color;
-    ctxLive.lineWidth   = 3;
-    ctxLive.strokeRect(x1, y1, x2 - x1, y2 - y1);
-    ctxLive.font = 'bold 15px sans-serif';
-    const tw = ctxLive.measureText(label).width;
-    ctxLive.fillStyle = info.color;
-    ctxLive.fillRect(x1, y1 > 22 ? y1 - 22 : 0, tw + 10, 20);
-    ctxLive.fillStyle = '#000';
-    ctxLive.fillText(label, x1 + 5, y1 > 24 ? y1 - 6 : 16);
+    const label = `${info.label} (${Math.round(d.score*100)}%)`;
+    yoloCtxLive.strokeStyle = info.color;
+    yoloCtxLive.lineWidth   = 3;
+    yoloCtxLive.strokeRect(x1, y1, x2-x1, y2-y1);
+    yoloCtxLive.font = 'bold 15px sans-serif';
+    const tw = yoloCtxLive.measureText(label).width;
+    yoloCtxLive.fillStyle = info.color;
+    yoloCtxLive.fillRect(x1, y1>22?y1-22:0, tw+10, 20);
+    yoloCtxLive.fillStyle = '#000';
+    yoloCtxLive.fillText(label, x1+5, y1>24?y1-6:16);
   });
   if (hasBall && hasBag) {
-    statusDiv.textContent = '✅ Ballon + bagage détectés — capture !';
-    statusDiv.style.color = '#00FF99';
+    yoloStatusDiv.textContent = '✅ Ballon + bagage détectés — capture !'; yoloStatusDiv.style.color = '#00FF99';
   } else if (hasBall) {
-    statusDiv.textContent = '⚽ Ballon détecté — place une valise ou un sac';
-    statusDiv.style.color = '#FF3FA6';
+    yoloStatusDiv.textContent = '⚽ Ballon détecté — place une valise'; yoloStatusDiv.style.color = '#FF3FA6';
   } else if (hasBag) {
-    statusDiv.textContent = '🧳 Bagage détecté — place un ballon taille 5';
-    statusDiv.style.color = '#00E5FF';
+    yoloStatusDiv.textContent = '🧳 Bagage détecté — place un ballon taille 5'; yoloStatusDiv.style.color = '#00E5FF';
   } else {
-    statusDiv.textContent = 'Pointe vers ton bagage et un ballon ⚽';
-    statusDiv.style.color = '#888';
+    yoloStatusDiv.textContent = 'Pointe vers ton bagage et un ballon ⚽'; yoloStatusDiv.style.color = '#888';
   }
 }
 
-// ── TEST : dessine des rectangles factices pour vérifier le canvas ──
+// ── Inférence sur la photo figée ──────────────────────────────
+async function yoloRunOnPhoto() {
+  if (!yoloModel) return [];
+  tf.engine().startScope();
+  try {
+    const img     = tf.browser.fromPixels(yoloCanvasPhoto);
+    const resized = tf.image.resizeBilinear(img, [640,640]);
+    const input   = resized.div(255.0).expandDims(0);
+    const output  = yoloModel.execute(input);
+    return await parseYOLO(output);
+  } catch(e) { dlog('❌ Inférence photo : '+e, 'debug-error'); return []; }
+  finally { tf.engine().endScope(); }
+}
+
+// ── Test boîtes ───────────────────────────────────────────────
 function drawTestBoxes() {
-  dlog('🟦 Dessin des boîtes de test sur la photo...', 'debug-info');
-  if (!photoImg) { dlog('⚠️ Aucune photo capturée', 'debug-warn'); return; }
-
-  // Redessine la photo propre
-  ctxPhoto.drawImage(photoImg, 0, 0);
-
-  const W = canvasPhoto.width;
-  const H = canvasPhoto.height;
-
-  // Boîte 1 : ballon fictif (rose) — centre-gauche
-  const ballX = W * 0.1, ballY = H * 0.3, ballS = Math.min(W, H) * 0.18;
-  ctxPhoto.strokeStyle = '#FF3FA6';
-  ctxPhoto.lineWidth   = 5;
-  ctxPhoto.strokeRect(ballX, ballY, ballS, ballS);
-  ctxPhoto.font = 'bold 16px sans-serif';
-  ctxPhoto.fillStyle = '#FF3FA6';
-  ctxPhoto.fillRect(ballX, ballY - 24, 200, 22);
-  ctxPhoto.fillStyle = '#000';
-  ctxPhoto.fillText('⚽ BALLON TEST (99%)', ballX + 4, ballY - 6);
-  ctxPhoto.font = '20px sans-serif';
-  ctxPhoto.fillText('📐', ballX + 4, ballY + ballS - 6);
-
-  // Boîte 2 : bagage fictif (cyan) — centre
-  const bagX = W * 0.38, bagY = H * 0.2, bagW = W * 0.45, bagH = H * 0.6;
-  ctxPhoto.strokeStyle = '#00E5FF';
-  ctxPhoto.lineWidth   = 3;
-  ctxPhoto.strokeRect(bagX, bagY, bagW, bagH);
-  ctxPhoto.font = 'bold 16px sans-serif';
-  ctxPhoto.fillStyle = '#00E5FF';
-  ctxPhoto.fillRect(bagX, bagY - 24, 210, 22);
-  ctxPhoto.fillStyle = '#000';
-  ctxPhoto.fillText('🧳 SAC À DOS TEST (85%)', bagX + 4, bagY - 6);
-
-  statusDiv.textContent = '🟦 Boîtes TEST affichées — le canvas fonctionne !';
-  statusDiv.style.color = '#00FF99';
-  dlog('✅ Boîtes test dessinées sur la photo', 'debug-ok');
+  if (!yoloPhotoImg) return;
+  yoloCtxPhoto.drawImage(yoloPhotoImg, 0, 0);
+  const W = yoloCanvasPhoto.width, H = yoloCanvasPhoto.height;
+  const bX=W*0.1, bY=H*0.3, bS=Math.min(W,H)*0.18;
+  yoloCtxPhoto.strokeStyle='#FF3FA6'; yoloCtxPhoto.lineWidth=5;
+  yoloCtxPhoto.strokeRect(bX,bY,bS,bS);
+  yoloCtxPhoto.font='bold 16px sans-serif';
+  yoloCtxPhoto.fillStyle='#FF3FA6'; yoloCtxPhoto.fillRect(bX,bY-24,200,22);
+  yoloCtxPhoto.fillStyle='#000'; yoloCtxPhoto.fillText('⚽ BALLON TEST',bX+4,bY-6);
+  const gX=W*0.38, gY=H*0.2, gW=W*0.45, gH=H*0.6;
+  yoloCtxPhoto.strokeStyle='#00E5FF'; yoloCtxPhoto.lineWidth=3;
+  yoloCtxPhoto.strokeRect(gX,gY,gW,gH);
+  yoloCtxPhoto.fillStyle='#00E5FF'; yoloCtxPhoto.fillRect(gX,gY-24,220,22);
+  yoloCtxPhoto.fillStyle='#000'; yoloCtxPhoto.fillText('🧳 BAGAGE TEST',gX+4,gY-6);
+  yoloStatusDiv.textContent='🟦 Boîtes TEST — canvas OK !'; yoloStatusDiv.style.color='#00FF99';
 }
 
 // ── Capture photo ─────────────────────────────────────────────
 async function capturePhoto() {
-  cancelAnimationFrame(animId);
-  video.pause();
+  cancelAnimationFrame(yoloAnimId);
+  yoloVideo.pause();
+  yoloCanvasPhoto.width  = yoloVideo.videoWidth;
+  yoloCanvasPhoto.height = yoloVideo.videoHeight;
+  yoloCtxPhoto.drawImage(yoloVideo, 0, 0);
+  yoloPhotoImg = new Image();
+  yoloPhotoImg.src = yoloCanvasPhoto.toDataURL();
+  dlog(`📸 Photo ${yoloCanvasPhoto.width}×${yoloCanvasPhoto.height}`, 'debug-info');
+  yoloBagBox = null; yoloBallBox = null; yoloDetBoxes = [];
 
-  canvasPhoto.width  = video.videoWidth;
-  canvasPhoto.height = video.videoHeight;
-  ctxPhoto.drawImage(video, 0, 0);
+  yoloStatusDiv.textContent = '🔍 Analyse en cours…'; yoloStatusDiv.style.color = '#FFD600';
 
-  photoImg = new Image();
-  photoImg.src = canvasPhoto.toDataURL();
-
-  dlog(`📸 Photo capturée — dimensions : ${canvasPhoto.width}×${canvasPhoto.height}`, 'debug-info');
-
-  bagBox = null; ballBox = null; detectionBoxes = [];
-
-  // ── Ré-inférence sur la photo figée ──────────────────────
-  statusDiv.textContent = '🔍 Inférence en cours sur la photo...';
-  statusDiv.style.color = '#FFD600';
-
-  const dets = await runInferenceOnPhoto();
-
-  if (dets.length > 0) {
-    const sx = canvasPhoto.width  / 640;
-    const sy = canvasPhoto.height / 640;
-    detectionBoxes = dets.map(d => {
-      let [y1, x1, y2, x2] = d.box;
-      return { x1: x1*sx, y1: y1*sy, x2: x2*sx, y2: y2*sy, cls: d.cls, score: d.score };
-    });
-    const ballDets = detectionBoxes.filter(d => d.cls === 32);
-    if (ballDets.length) ballBox = ballDets.reduce((a,b) => b.score>a.score?b:a);
-    const bagDets  = detectionBoxes.filter(d => [24,28,72].includes(d.cls));
-    if (bagDets.length)  bagBox  = bagDets.reduce((a,b)  => b.score>a.score?b:a);
-    drawDetections();
-    dlog(`✅ ${dets.length} détection(s) affichées sur la photo`, 'debug-ok');
-  } else {
-    // Aucune détection YOLO — on fallback sur les détections temps réel
-    dlog('⚠️ Inférence photo : 0 détection — fallback sur détections temps réel', 'debug-warn');
-    if (lastDetections.length > 0) {
-      const sx = canvasPhoto.width  / 640;
-      const sy = canvasPhoto.height / 640;
-      detectionBoxes = lastDetections.map(d => {
-        let [y1, x1, y2, x2] = d.box;
-        return { x1: x1*sx, y1: y1*sy, x2: x2*sx, y2: y2*sy, cls: d.cls, score: d.score };
-      });
-      const ballDets = detectionBoxes.filter(d => d.cls === 32);
-      if (ballDets.length) ballBox = ballDets.reduce((a,b) => b.score>a.score?b:a);
-      const bagDets  = detectionBoxes.filter(d => [24,28,72].includes(d.cls));
-      if (bagDets.length)  bagBox  = bagDets.reduce((a,b)  => b.score>a.score?b:a);
-      drawDetections();
-    }
+  let dets = await yoloRunOnPhoto();
+  if (dets.length === 0 && yoloLastDetections.length > 0) {
+    dlog('⚠️ Fallback vers détections temps réel', 'debug-warn');
+    dets = yoloLastDetections;
   }
 
-  video.style.display       = 'none';
-  canvasLive.style.display  = 'none';
-  canvasPhoto.style.display = 'block';
+  if (dets.length > 0) {
+    const sx = yoloCanvasPhoto.width/640, sy = yoloCanvasPhoto.height/640;
+    yoloDetBoxes = dets.map(d => { let[y1,x1,y2,x2]=d.box; return{x1:x1*sx,y1:y1*sy,x2:x2*sx,y2:y2*sy,cls:d.cls,score:d.score}; });
+    const bDets = yoloDetBoxes.filter(d=>d.cls===32);
+    if (bDets.length) yoloBallBox = bDets.reduce((a,b)=>b.score>a.score?b:a);
+    const gDets = yoloDetBoxes.filter(d=>[24,28,72].includes(d.cls));
+    if (gDets.length) yoloBagBox  = gDets.reduce((a,b)=>b.score>a.score?b:a);
+    yoloDrawDetections();
+  }
 
-  document.getElementById('btn-capture').style.display   = 'none';
-  document.getElementById('btn-retake').style.display    = 'inline-block';
-  document.getElementById('btn-measure').style.display   = (ballBox && bagBox) ? 'inline-block' : 'none';
+  yoloVideo.style.display       = 'none';
+  yoloCanvasLive.style.display  = 'none';
+  yoloCanvasPhoto.style.display = 'block';
+
+  document.getElementById('btn-capture').style.display    = 'none';
+  document.getElementById('btn-retake').style.display     = 'inline-block';
   document.getElementById('btn-test-boxes').style.display = 'inline-block';
+  document.getElementById('btn-measure').style.display    = (yoloBallBox && yoloBagBox) ? 'inline-block' : 'none';
 
-  if (bagBox && ballBox) {
-    statusDiv.textContent = `✅ ${CLASS_INFO[bagBox.cls].label} + ballon détectés — appuie sur Mesurer !`;
-    statusDiv.style.color = '#00FF99';
-  } else if (!ballBox && !bagBox) {
-    statusDiv.textContent = '❌ Rien détecté — utilise "Tester boîtes" pour vérifier le canvas';
-    statusDiv.style.color = '#FF3FA6';
-  } else if (!ballBox) {
-    statusDiv.textContent = '❌ Ballon non détecté — reprends avec un ballon taille 5';
-    statusDiv.style.color = '#FF3FA6';
+  if (yoloBagBox && yoloBallBox) {
+    yoloStatusDiv.textContent = `✅ ${CLASS_INFO[yoloBagBox.cls].label} + ballon — appuie sur Mesurer !`;
+    yoloStatusDiv.style.color = '#00FF99';
+  } else if (!yoloBallBox && !yoloBagBox) {
+    yoloStatusDiv.textContent = '❌ Rien détecté — essaie "Tester boîtes" pour vérifier';
+    yoloStatusDiv.style.color = '#FF3FA6';
+  } else if (!yoloBallBox) {
+    yoloStatusDiv.textContent = '❌ Ballon non détecté — reprends avec un ballon taille 5';
+    yoloStatusDiv.style.color = '#FF3FA6';
   } else {
-    statusDiv.textContent = '❌ Bagage non détecté — reprends';
-    statusDiv.style.color = '#FF3FA6';
+    yoloStatusDiv.textContent = '❌ Bagage non détecté — reprends';
+    yoloStatusDiv.style.color = '#FF3FA6';
   }
 }
 
-function drawDetections() {
-  detectionBoxes.forEach(d => {
+function yoloDrawDetections() {
+  yoloDetBoxes.forEach(d => {
     const info = CLASS_INFO[d.cls];
-    ctxPhoto.strokeStyle = info.color;
-    ctxPhoto.lineWidth = d.cls === 32 ? 5 : 3;
-    ctxPhoto.strokeRect(d.x1, d.y1, d.x2 - d.x1, d.y2 - d.y1);
-    const label = `${info.label} (${Math.round(d.score * 100)}%)`;
-    ctxPhoto.font = 'bold 18px sans-serif';
-    const tw = ctxPhoto.measureText(label).width;
-    ctxPhoto.fillStyle = info.color;
-    ctxPhoto.fillRect(d.x1, d.y1 > 26 ? d.y1 - 26 : 0, tw + 10, 24);
-    ctxPhoto.fillStyle = '#000';
-    ctxPhoto.fillText(label, d.x1 + 5, d.y1 > 26 ? d.y1 - 5 : 19);
-    if (d.cls === 32) {
-      ctxPhoto.font = '22px sans-serif';
-      ctxPhoto.fillText('📐', d.x1 + 4, d.y2 - 6);
-    }
+    yoloCtxPhoto.strokeStyle = info.color;
+    yoloCtxPhoto.lineWidth   = d.cls===32 ? 5 : 3;
+    yoloCtxPhoto.strokeRect(d.x1, d.y1, d.x2-d.x1, d.y2-d.y1);
+    const label = `${info.label} (${Math.round(d.score*100)}%)`;
+    yoloCtxPhoto.font = 'bold 18px sans-serif';
+    const tw = yoloCtxPhoto.measureText(label).width;
+    yoloCtxPhoto.fillStyle = info.color;
+    yoloCtxPhoto.fillRect(d.x1, d.y1>26?d.y1-26:0, tw+10, 24);
+    yoloCtxPhoto.fillStyle = '#000';
+    yoloCtxPhoto.fillText(label, d.x1+5, d.y1>26?d.y1-5:19);
+    if (d.cls===32) { yoloCtxPhoto.font='22px sans-serif'; yoloCtxPhoto.fillText('📐',d.x1+4,d.y2-6); }
   });
 }
 
 // ── Mesure ────────────────────────────────────────────────────
 function measure() {
-  if (!ballBox) { statusDiv.textContent = '❌ Pas de ballon de référence !'; return; }
-  if (!bagBox)  { statusDiv.textContent = '❌ Pas de bagage détecté !';      return; }
-  const ballWpx = ballBox.x2 - ballBox.x1;
-  const ballHpx = ballBox.y2 - ballBox.y1;
-  const ratio   = ((ballWpx / BALL_D_MM) + (ballHpx / BALL_D_MM)) / 2;
-  const bagWcm  = (((bagBox.x2 - bagBox.x1) / ratio) / 10).toFixed(1);
-  const bagHcm  = (((bagBox.y2 - bagBox.y1) / ratio) / 10).toFixed(1);
-  const fitsCabin = bagWcm <= CABIN_MAX_W_CM && bagHcm <= CABIN_MAX_H_CM;
-  const cabinDiv  = document.getElementById('cabin-check');
-  if (fitsCabin) {
-    cabinDiv.textContent = '✅ Accepté comme bagage cabine';
-    cabinDiv.style.background = 'rgba(0,255,100,0.15)';
-    cabinDiv.style.color = '#00FF99';
-  } else {
-    cabinDiv.textContent      = '❌ Trop grand pour la cabine';
-    cabinDiv.style.background = 'rgba(255,60,60,0.15)';
-    cabinDiv.style.color      = '#FF5555';
-  }
-  document.getElementById('res-class').textContent = CLASS_INFO[bagBox.cls].label;
+  if (!yoloBallBox) { yoloStatusDiv.textContent='❌ Pas de ballon !'; return; }
+  if (!yoloBagBox)  { yoloStatusDiv.textContent='❌ Pas de bagage !'; return; }
+  const bW = yoloBallBox.x2-yoloBallBox.x1, bH = yoloBallBox.y2-yoloBallBox.y1;
+  const ratio  = ((bW/BALL_D_MM)+(bH/BALL_D_MM))/2;
+  const bagWcm = ((yoloBagBox.x2-yoloBagBox.x1)/ratio/10).toFixed(1);
+  const bagHcm = ((yoloBagBox.y2-yoloBagBox.y1)/ratio/10).toFixed(1);
+  const fits   = bagWcm <= CABIN_MAX_W_CM && bagHcm <= CABIN_MAX_H_CM;
+  const cab    = document.getElementById('cabin-check');
+  if (fits) { cab.textContent='✅ Accepté en cabine'; cab.style.background='rgba(0,255,100,0.15)'; cab.style.color='#00FF99'; }
+  else      { cab.textContent='❌ Trop grand pour la cabine'; cab.style.background='rgba(255,60,60,0.15)'; cab.style.color='#FF5555'; }
+  document.getElementById('res-class').textContent = CLASS_INFO[yoloBagBox.cls].label;
   document.getElementById('res-dims').textContent  = `${bagWcm} × ${bagHcm}`;
-  document.getElementById('conf').textContent      = `Confiance YOLO : ${Math.round(bagBox.score * 100)}% — référence ballon ⚽ (22cm)`;
-  document.getElementById('result').style.display  = 'block';
-  statusDiv.textContent = '📏 Mesure terminée !';
-  statusDiv.style.color = '#00FF99';
+  document.getElementById('conf').textContent      = `Confiance YOLO : ${Math.round(yoloBagBox.score*100)}% — référence ⚽ (22cm)`;
+  document.getElementById('yolo-result').style.display = 'block';
+  yoloStatusDiv.textContent='📏 Mesure terminée !'; yoloStatusDiv.style.color='#00FF99';
 }
 
 // ── Reprendre ─────────────────────────────────────────────────
 function retake() {
-  bagBox = null; ballBox = null; photoImg = null; detectionBoxes = [];
-  canvasPhoto.style.display = 'none';
-  canvasLive.style.display  = 'block';
-  video.style.display       = 'block';
-  video.play();
-  document.getElementById('btn-capture').style.display   = 'inline-block';
-  document.getElementById('btn-retake').style.display    = 'none';
-  document.getElementById('btn-measure').style.display   = 'none';
+  yoloBagBox=null; yoloBallBox=null; yoloPhotoImg=null; yoloDetBoxes=[];
+  yoloCanvasPhoto.style.display = 'none';
+  yoloCanvasLive.style.display  = 'block';
+  yoloVideo.style.display       = 'block';
+  yoloVideo.play();
+  document.getElementById('btn-capture').style.display    = 'inline-block';
+  document.getElementById('btn-retake').style.display     = 'none';
+  document.getElementById('btn-measure').style.display    = 'none';
   document.getElementById('btn-test-boxes').style.display = 'none';
-  document.getElementById('result').style.display        = 'none';
-  document.getElementById('cabin-check').textContent     = '';
-  statusDiv.textContent = 'Pointe vers ton bagage et un ballon ⚽';
-  statusDiv.style.color = '#888';
-  detectLoop();
+  document.getElementById('yolo-result').style.display    = 'none';
+  document.getElementById('cabin-check').textContent      = '';
+  yoloStatusDiv.textContent='Pointe vers ton bagage et un ballon ⚽'; yoloStatusDiv.style.color='#888';
+  yoloDetectLoop();
 }
 
-// ── Init ──────────────────────────────────────────────────────
-async function init() {
-  await setupCamera();
-  await loadModel();
-}
-init();
 </script>
 </body>
 </html>
-
-// ── VERSION DEBUG AVEC SEUIL 0.05 ──────────────────────────────────────────────────────
