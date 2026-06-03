@@ -231,13 +231,22 @@
       renderer.setPixelRatio(window.devicePixelRatio);
       renderer.setSize(window.innerWidth, window.innerHeight);
       renderer.xr.enabled = true;
-      document.getElementById('ar-screen').appendChild(renderer.domElement);
+      
+      // CORRECTION 1 : On attache le canvas au body (comme dans ton code qui marche)
+      // On lui donne une position absolue et un z-index bas pour qu'il reste en fond
+      renderer.domElement.style.position = 'absolute';
+      renderer.domElement.style.top = '0';
+      renderer.domElement.style.left = '0';
+      renderer.domElement.style.zIndex = '-1';
+      document.body.appendChild(renderer.domElement);
 
-      document.getElementById('ar-screen').appendChild(ARButton.createButton(renderer, {
+      // CORRECTION 2 : On cible UNIQUEMENT l'interface transparente (#ar-ui-layer) pour l'overlay
+      const arButton = ARButton.createButton(renderer, {
         requiredFeatures: ['hit-test'],
         optionalFeatures: ['dom-overlay'],
-        domOverlay: { root: document.getElementById('ar-screen') }
-      }));
+        domOverlay: { root: document.getElementById('ar-ui-layer') } // C'est ici la clé !
+      });
+      document.getElementById('ar-screen').appendChild(arButton);
 
       reticle = new THREE.Mesh(
         new THREE.RingGeometry(0.04, 0.05, 32).rotateX(-Math.PI / 2),
