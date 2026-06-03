@@ -3,1029 +3,552 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Mesure Bagage</title>
+  <title>Mesure Bagage - OUIGO</title>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0"></script>
-  <script src="https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.min.js"></script>
+
   <style>
+    /* ── DESIGN SYSTEM - ADN OUIGO ── */
+    :root {
+      --ouigo-pink: #FF3FA6;
+      --ouigo-cyan: #00E5FF;
+      --ouigo-blue: #001489; /* Bleu foncé pour le texte */
+      --bg-light: #F8F9FA;
+    }
+
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { background: #13002F; color: white; font-family: sans-serif;
-           display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
-
-    /* ── Écran d'accueil ──────────────────────────────────────── */
-    #screen-home {
-      display: flex; flex-direction: column; align-items: center;
-      justify-content: center; padding: 30px 20px; gap: 20px;
-      min-height: 100vh; width: 100%; text-align: center;
-    }
-    #screen-home h1 { font-size: 24px; font-weight: 600; }
-    #screen-home p  { font-size: 13px; color: #aaa; max-width: 300px; }
-
-    .mode-btn {
-      width: 280px; padding: 18px 16px; border: none; border-radius: 14px;
-      cursor: pointer; font-size: 15px; font-weight: 600;
-      display: flex; flex-direction: column; align-items: center; gap: 6px;
-    }
-    .mode-btn .icon    { font-size: 36px; }
-    .mode-btn .title   { font-size: 17px; }
-    .mode-btn .sub     { font-size: 11px; font-weight: 400; opacity: 0.8; }
-    .mode-btn .badge   { font-size: 10px; padding: 2px 8px; border-radius: 99px;
-                         margin-top: 4px; font-weight: 500; }
-
-    #btn-start-ar   { background: linear-gradient(135deg, #7B1FA2, #4A148C); color: white; }
-    #btn-start-yolo { background: linear-gradient(135deg, #1565C0, #0D47A1); color: white; }
-    #btn-start-ar   .badge { background: rgba(255,255,255,0.2); color: white; }
-    #btn-start-yolo .badge { background: rgba(255,255,255,0.2); color: white; }
-
-    #ar-not-supported {
-      font-size: 11px; color: #FF7043; background: rgba(255,112,67,0.12);
-      border-radius: 8px; padding: 8px 14px; max-width: 280px;
+    
+    body {
+      font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+      background-color: var(--bg-light);
+      color: var(--ouigo-blue);
+      overflow-x: hidden;
+      transition: background-color 0.3s ease;
     }
 
-    /* ── Mode YOLO (UI classique) ─────────────────────────────── */
-    #yolo-ui { display: none; flex-direction: column; align-items: center;
-               width: 100%; min-height: 100vh; }
-
-    #yolo-header { display: flex; align-items: center; width: 100%;
-                   padding: 12px 16px; gap: 10px; }
-    #yolo-header h2 { font-size: 17px; font-weight: 500; flex: 1; }
-    #btn-back-home { background: rgba(255,255,255,0.1); color: white;
-                     border: none; border-radius: 8px; padding: 6px 12px;
-                     font-size: 12px; cursor: pointer; }
-
-    #status { color: #ff3fa5; font-weight: bold; font-size: 13px;
-              text-align: center; padding: 0 16px 8px; min-height: 20px; }
-    #instr  { font-size: 12px; color: #ccc; text-align: center;
-              padding: 4px 16px 0; min-height: 18px; }
-
-    #container { position: relative; width: 100vw; height: 55vh; }
-    video, #canvas-live, #canvas-photo {
-      position: absolute; top: 0; left: 0;
-      width: 100%; height: 100%; object-fit: cover;
+    /* Cette classe rend le fond transparent pour voir la caméra */
+    body.camera-active {
+      background-color: transparent !important;
+      overflow: hidden;
     }
+
+    /* ── PAGE D'ACCUEIL ── */
+    #home-screen {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 20px;
+      text-align: center;
+    }
+
+    #home-screen h1 {
+      font-size: 32px;
+      margin-bottom: 15px;
+      color: var(--ouigo-blue);
+    }
+
+    #home-screen p {
+      font-size: 16px;
+      margin-bottom: 40px;
+      color: #555;
+      max-width: 320px;
+      line-height: 1.4;
+    }
+
+    .btn-home {
+      width: 100%;
+      max-width: 320px;
+      padding: 18px 20px;
+      margin-bottom: 20px;
+      border: none;
+      border-radius: 50px;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+    .btn-home:active { transform: scale(0.96); }
+
+    .btn-ar { background-color: var(--ouigo-cyan); color: var(--ouigo-blue); }
+    .btn-yolo { background-color: var(--ouigo-pink); color: white; }
+
+    /* ── BOUTON RETOUR COMMUN ── */
+    .btn-back {
+      position: absolute;
+      top: 15px;
+      left: 15px;
+      background: rgba(255,255,255,0.9);
+      color: var(--ouigo-blue);
+      border: none;
+      padding: 12px 20px;
+      border-radius: 25px;
+      font-weight: bold;
+      z-index: 100;
+      cursor: pointer;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+    }
+
+    /* ── UI AR (Three.js) ── */
+    #ar-screen { display: none; width: 100vw; height: 100vh; position: relative; }
+    #ar-ui-layer {
+      position: absolute; top: 70px; left: 0; width: 100%;
+      pointer-events: none; z-index: 10; text-align: center;
+    }
+    #ar-info {
+      font-size: 16px; font-weight: bold; color: var(--ouigo-blue);
+      background: rgba(0, 229, 255, 0.9); padding: 12px 20px; 
+      border-radius: 15px; display: inline-block;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+    }
+    
+    /* Personnalisation du bouton AR officiel de Three.js */
+    #ARButton {
+      background-color: var(--ouigo-cyan) !important;
+      color: var(--ouigo-blue) !important;
+      border-radius: 30px !important;
+      font-weight: bold !important;
+      border: none !important;
+      bottom: 30px !important;
+      padding: 15px 30px !important;
+      opacity: 1 !important;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.2) !important;
+    }
+
+    /* ── UI YOLO (Photo/Référence) ── */
+    #yolo-screen { display: none; width: 100vw; height: 100vh; position: relative; }
+    #yolo-container { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 1; overflow: hidden; }
+    #video, #canvas-live, #canvas-photo { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
     #canvas-photo { display: none; }
 
-    #legend { display: flex; gap: 16px; padding: 6px 16px;
-              font-size: 12px; color: #ccc; }
-    .legend-dot { width: 12px; height: 12px; border-radius: 50%;
-                  display: inline-block; margin-right: 5px; vertical-align: middle; }
+    #yolo-status {
+      position: absolute; top: 70px; left: 0; width: 100%; text-align: center;
+      color: white; font-weight: bold; font-size: 16px; text-shadow: 1px 1px 4px rgba(0,0,0,0.8); z-index: 10;
+    }
 
-    #btn-bar { width: 100%; display: flex; justify-content: center;
-               gap: 10px; padding: 12px 16px;
-               background: rgba(19,0,47,0.95); flex-wrap: wrap; }
-    #btn-bar button { padding: 10px 18px; font-size: 14px; font-weight: 500;
-                      border: none; border-radius: 8px; cursor: pointer; }
-    #btn-capture   { background: #4CAF50; color: white; }
-    #btn-retake    { background: #888;    color: white; }
-    #btn-measure   { background: #FF9800; color: white; }
-    #btn-debug     { background: #9C27B0; color: white; }
-    #btn-test-boxes{ background: #2196F3; color: white; }
+    #yolo-btn-bar {
+      position: absolute; bottom: 30px; width: 100%; display: flex; justify-content: center; gap: 15px; z-index: 10;
+    }
+    .btn-action {
+      padding: 15px 30px; font-size: 16px; font-weight: bold; border: none; border-radius: 30px; 
+      cursor: pointer; box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+    }
+    #btn-capture  { background: var(--ouigo-cyan); color: var(--ouigo-blue); }
+    #btn-retake   { background: white; color: var(--ouigo-blue); }
+    #btn-measure  { background: var(--ouigo-pink); color: white; }
 
     #yolo-result {
-      width: 100%; background: rgba(255,255,255,0.08);
-      border-top: 1px solid rgba(255,255,255,0.15);
-      padding: 14px 20px; display: none; text-align: center;
+      position: absolute; top: 130px; left: 50%; transform: translateX(-50%);
+      background: rgba(255,255,255,0.95); border-radius: 20px; padding: 25px 20px; 
+      display: none; text-align: center; z-index: 10; box-shadow: 0 10px 30px rgba(0,0,0,0.15);
+      color: var(--ouigo-blue); width: 90%; max-width: 320px;
     }
-    #yolo-result h3 { font-size: 16px; margin-bottom: 8px; color: #FF3FA6; }
-    .dim-row   { font-size: 22px; font-weight: 500; margin: 4px 0; }
-    .dim-label { font-size: 12px; color: #aaa; margin-bottom: 10px; }
-    #conf      { font-size: 12px; color: #888; }
-    #cabin-check { padding: 6px 12px; border-radius: 8px; display: inline-block;
-                   margin-top: 6px; font-weight: bold; }
-
-    #debug-panel { display: none; width: 100%; background: rgba(0,0,0,0.85);
-                   border-top: 1px solid #444; padding: 10px 14px;
-                   font-size: 11px; font-family: monospace; color: #0f0;
-                   max-height: 220px; overflow-y: auto; }
-    #debug-panel.visible { display: block; }
-    .debug-line  { margin: 2px 0; }
-    .debug-warn  { color: #FFD600; }
-    .debug-error { color: #FF5555; }
-    .debug-ok    { color: #00FF99; }
-    .debug-info  { color: #00E5FF; }
-
-    /* ── Mode AR ──────────────────────────────────────────────── */
-    /* Le canvas THREE.js est injecté en position fixe, plein écran */
-    #ar-canvas-container canvas {
-      position: fixed; top: 0; left: 0;
-      width: 100vw !important; height: 100vh !important;
-      z-index: 10;
-    }
-
-    /* Dom-overlay : UI par-dessus le flux AR */
-    #ar-overlay {
-      display: none;
-      position: fixed; inset: 0; z-index: 20;
-      pointer-events: none; /* pass-through sauf éléments actifs */
-    }
-
-    /* Zone de tap transparent plein écran */
-    #ar-tap-area {
-      position: absolute; inset: 0;
-      pointer-events: auto;
-      background: transparent;
-      cursor: crosshair;
-    }
-
-    /* Réticule CSS au centre */
-    #ar-reticle-css {
-      position: absolute;
-      top: 50%; left: 50%;
-      transform: translate(-50%, -50%);
-      width: 50px; height: 50px;
-      pointer-events: none;
-    }
-    #ar-reticle-css::before, #ar-reticle-css::after {
-      content: ''; position: absolute;
-      background: white;
-    }
-    /* croix horizontale */
-    #ar-reticle-css::before {
-      width: 100%; height: 2px;
-      top: 50%; left: 0; transform: translateY(-50%);
-    }
-    /* croix verticale */
-    #ar-reticle-css::after {
-      width: 2px; height: 100%;
-      left: 50%; top: 0; transform: translateX(-50%);
-    }
-    .reticle-ring {
-      position: absolute; inset: 0;
-      border: 2px solid white; border-radius: 50%;
-      opacity: 0.5;
-    }
-
-    /* Panneau d'instruction en haut */
-    #ar-top {
-      position: absolute; top: 0; left: 0; right: 0;
-      padding: 14px 16px;
-      background: linear-gradient(to bottom, rgba(0,0,0,0.7), transparent);
-      pointer-events: none;
-      display: flex; flex-direction: column; align-items: center; gap: 6px;
-    }
-    #ar-step-indicator {
-      display: flex; gap: 8px;
-    }
-    .ar-step-dot {
-      width: 10px; height: 10px; border-radius: 50%;
-      background: rgba(255,255,255,0.3);
-      transition: background 0.3s;
-    }
-    .ar-step-dot.done   { background: #00FF99; }
-    .ar-step-dot.active { background: white; }
-    #ar-instr {
-      font-size: 14px; font-weight: 600; text-align: center;
-      color: white; text-shadow: 0 1px 4px rgba(0,0,0,0.8);
-    }
-    #ar-sub {
-      font-size: 11px; color: #ccc; text-align: center;
-    }
-
-    /* Panneau résultat en bas */
-    #ar-bottom {
-      position: absolute; bottom: 0; left: 0; right: 0;
-      padding: 16px; pointer-events: auto;
-      background: linear-gradient(to top, rgba(19,0,47,0.95), transparent);
-    }
-    #ar-result-panel {
-      display: none;
-      background: rgba(255,255,255,0.08);
-      border: 1px solid rgba(255,255,255,0.15);
-      border-radius: 12px; padding: 14px; text-align: center;
-    }
-    #ar-dims { font-size: 26px; font-weight: 600; margin: 4px 0; }
-    #ar-cabin {
-      padding: 6px 12px; border-radius: 8px;
-      display: inline-block; margin-top: 6px;
-      font-weight: bold; font-size: 14px;
-    }
-    #ar-btn-row {
-      display: flex; gap: 10px; justify-content: center; margin-top: 12px;
-      flex-wrap: wrap;
-    }
-    #ar-btn-reset  { background: #888; color: white; border: none;
-                     border-radius: 8px; padding: 10px 18px; font-size: 14px;
-                     cursor: pointer; pointer-events: auto; }
-    #ar-btn-exit   { background: #B71C1C; color: white; border: none;
-                     border-radius: 8px; padding: 10px 18px; font-size: 14px;
-                     cursor: pointer; pointer-events: auto; }
-
-    /* Points placés : canvas 2D par-dessus pour dessiner les traits */
-    #ar-points-canvas {
-      position: absolute; inset: 0;
-      pointer-events: none;
-    }
-
-    /* Info distance flottante sur les segments */
-    .ar-dist-label {
-      position: absolute;
-      background: rgba(0,0,0,0.7);
-      color: white; font-size: 13px; font-weight: 600;
-      padding: 2px 8px; border-radius: 8px;
-      transform: translate(-50%, -50%);
-      pointer-events: none;
-    }
+    #res-class { font-size: 18px; margin-bottom: 5px; }
+    .dim-row { font-size: 32px; font-weight: bold; margin: 5px 0; color: var(--ouigo-pink); }
+    .dim-label { font-size: 13px; color: #666; margin-bottom: 20px; }
+    #cabin-check { padding: 12px; border-radius: 12px; font-weight: bold; font-size: 16px; }
   </style>
 </head>
 <body>
 
-<!-- ══════════════════════════════════════════════════════════════
-     ÉCRAN D'ACCUEIL
-══════════════════════════════════════════════════════════════ -->
-<div id="screen-home">
-  <div style="font-size:48px">🧳</div>
-  <h1>Mesure Bagage</h1>
-  <p>Mesurez votre valise ou sac à dos pour vérifier qu'il passe en cabine.</p>
+  <div id="home-screen">
+    <h1>Contrôle Bagage</h1>
+    <p>Vérifiez rapidement si votre valise ou sac à dos passe en cabine avec nos outils.</p>
 
-  <button class="mode-btn" id="btn-start-ar" onclick="startAR()">
-    <span class="icon">🔮</span>
-    <span class="title">Mode AR</span>
-    <span class="sub">Sans objet de référence</span>
-    <span class="badge" id="ar-badge">Vérification en cours…</span>
-  </button>
+    <button class="btn-home btn-ar" onclick="startAR()">
+      <span style="font-size: 20px;">📱</span> Mesure AR (Automatique)
+    </button>
 
-  <button class="mode-btn" id="btn-start-yolo" onclick="startYOLO()">
-    <span class="icon">📸</span>
-    <span class="title">Mode Photo</span>
-    <span class="sub">Avec ballon ⚽ comme référence</span>
-    <span class="badge">Tous appareils</span>
-  </button>
-
-  <div id="ar-not-supported" style="display:none">
-    ⚠️ AR non disponible sur cet appareil.<br>
-    WebXR AR nécessite <strong>Android + Chrome</strong>.<br>
-    Utilisez le Mode Photo.
-  </div>
-</div>
-
-<!-- ══════════════════════════════════════════════════════════════
-     MODE AR — Container canvas THREE.js (injecté dynamiquement)
-══════════════════════════════════════════════════════════════ -->
-<div id="ar-canvas-container"></div>
-
-<!-- ══════════════════════════════════════════════════════════════
-     MODE AR — Dom-overlay (UI par-dessus le flux caméra AR)
-══════════════════════════════════════════════════════════════ -->
-<div id="ar-overlay">
-
-  <!-- Zone de tap plein écran -->
-  <div id="ar-tap-area" onclick="arPlacePoint()"></div>
-
-  <!-- Réticule CSS au centre -->
-  <div id="ar-reticle-css">
-    <div class="reticle-ring"></div>
+    <button class="btn-home btn-yolo" onclick="startYOLO()">
+      <span style="font-size: 20px;">⚽</span> Mesure avec un Objet
+    </button>
   </div>
 
-  <!-- Canvas 2D pour dessiner les segments et labels -->
-  <canvas id="ar-points-canvas"></canvas>
 
-  <!-- Panneau haut : instructions -->
-  <div id="ar-top">
-    <div id="ar-step-indicator">
-      <div class="ar-step-dot active" id="dot-0"></div>
-      <div class="ar-step-dot"        id="dot-1"></div>
-      <div class="ar-step-dot"        id="dot-2"></div>
-    </div>
-    <div id="ar-instr">Cherche la surface…</div>
-    <div id="ar-sub">Déplace lentement ton téléphone</div>
-  </div>
-
-  <!-- Panneau bas : résultat + boutons -->
-  <div id="ar-bottom">
-    <div id="ar-result-panel">
-      <div style="font-size:13px;color:#aaa;margin-bottom:4px" id="ar-res-class">Valise</div>
-      <div id="ar-dims">— × —</div>
-      <div style="font-size:12px;color:#aaa">largeur × hauteur (cm)</div>
-      <div id="ar-cabin"></div>
-    </div>
-    <div id="ar-btn-row">
-      <button id="ar-btn-reset" onclick="arReset()" style="display:none">🔄 Recommencer</button>
-      <button id="ar-btn-exit"  onclick="arExit()">✖ Quitter AR</button>
+  <div id="ar-screen">
+    <button class="btn-back" onclick="window.location.reload()">← Accueil</button>
+    <div id="ar-ui-layer">
+      <div id="ar-info">1. Appuyez sur START AR<br>2. Visez le sol</div>
     </div>
   </div>
 
-</div>
 
-<!-- ══════════════════════════════════════════════════════════════
-     MODE YOLO
-══════════════════════════════════════════════════════════════ -->
-<div id="yolo-ui">
+  <div id="yolo-screen">
+    <button class="btn-back" onclick="window.location.reload()">← Accueil</button>
+    <div id="yolo-status">Chargement de l'intelligence artificielle...</div>
 
-  <div id="yolo-header">
-    <button id="btn-back-home" onclick="goHome()">← Accueil</button>
-    <h2>Mode Photo 📸</h2>
-    <button id="btn-debug" onclick="toggleDebug()">🐛</button>
+    <div id="yolo-container">
+      <video id="video" autoplay muted playsinline></video>
+      <canvas id="canvas-live"></canvas>
+      <canvas id="canvas-photo"></canvas>
+    </div>
+
+    <div id="yolo-result">
+      <h3 id="res-class"></h3>
+      <div class="dim-row" id="res-dims"></div>
+      <div class="dim-label">largeur × hauteur (cm)</div>
+      <div id="cabin-check"></div>
+    </div>
+
+    <div id="yolo-btn-bar">
+      <button id="btn-capture" class="btn-action" onclick="capturePhoto()" style="display:none;">📸 Capturer</button>
+      <button id="btn-retake" class="btn-action" onclick="retake()" style="display:none;">🔄 Reprendre</button>
+      <button id="btn-measure" class="btn-action" onclick="measure()" style="display:none;">📏 Mesurer</button>
+    </div>
   </div>
 
-  <div id="status">Chargement du modèle…</div>
-  <div id="instr"></div>
 
-  <div id="container">
-    <video id="video" autoplay muted playsinline></video>
-    <canvas id="canvas-live"></canvas>
-    <canvas id="canvas-photo" style="display:none"></canvas>
-  </div>
+  <script type="module">
+    import { ARButton } from 'https://cdn.jsdelivr.net/npm/three@0.128.0/examples/jsm/webxr/ARButton.js';
 
-  <div id="legend">
-    <span><span class="legend-dot" style="background:#00E5FF;"></span>Objet à mesurer</span>
-    <span><span class="legend-dot" style="background:#FF3FA6;"></span>Référence (ballon ⚽)</span>
-  </div>
-
-  <div id="btn-bar">
-    <button id="btn-capture"    onclick="capturePhoto()">📸 Capturer</button>
-    <button id="btn-retake"     onclick="retake()"         style="display:none">🔄 Reprendre</button>
-    <button id="btn-measure"    onclick="measure()"        style="display:none">📏 Mesurer</button>
-    <button id="btn-test-boxes" onclick="drawTestBoxes()"  style="display:none">🟦 Tester boîtes</button>
-  </div>
-
-  <div id="yolo-result">
-    <h3 id="res-class"></h3>
-    <div class="dim-row" id="res-dims"></div>
-    <div class="dim-label">largeur × hauteur (cm)</div>
-    <div id="cabin-check" style="font-size:18px;margin-top:8px;"></div>
-    <div id="conf"></div>
-  </div>
-
-  <div id="debug-panel"></div>
-
-</div>
-
-<!-- ══════════════════════════════════════════════════════════════
-     SCRIPT
-══════════════════════════════════════════════════════════════ -->
-<script>
-
-// ════════════════════════════════════════════════════════════════
-// CONSTANTES PARTAGÉES
-// ════════════════════════════════════════════════════════════════
-const CABIN_MAX_W_CM = 55;
-const CABIN_MAX_H_CM = 35;
-
-// ════════════════════════════════════════════════════════════════
-// NAVIGATION
-// ════════════════════════════════════════════════════════════════
-function goHome() {
-  // Stop YOLO si actif
-  if (yoloAnimId) cancelAnimationFrame(yoloAnimId);
-  if (yoloVideo && yoloVideo.srcObject)
-    yoloVideo.srcObject.getTracks().forEach(t => t.stop());
-  document.getElementById('yolo-ui').style.display        = 'none';
-  document.getElementById('screen-home').style.display    = 'flex';
-}
-
-// ════════════════════════════════════════════════════════════════
-// VÉRIFICATION SUPPORT AR
-// ════════════════════════════════════════════════════════════════
-async function checkARSupport() {
-  const badge  = document.getElementById('ar-badge');
-  const msgDiv = document.getElementById('ar-not-supported');
-  const arBtn  = document.getElementById('btn-start-ar');
-  try {
-    if (navigator.xr && await navigator.xr.isSessionSupported('immersive-ar')) {
-      badge.textContent = '✅ Disponible sur cet appareil';
-    } else {
-      badge.textContent    = '❌ Non disponible (Android Chrome requis)';
-      arBtn.style.opacity  = '0.4';
-      arBtn.style.cursor   = 'not-allowed';
-      arBtn.onclick        = () => msgDiv.style.display = 'block';
-      msgDiv.style.display = 'block';
-    }
-  } catch(e) {
-    badge.textContent    = '❌ Non disponible';
-    arBtn.style.opacity  = '0.4';
-    arBtn.style.cursor   = 'not-allowed';
-    arBtn.onclick        = () => msgDiv.style.display = 'block';
-  }
-}
-checkARSupport();
-
-
-// ════════════════════════════════════════════════════════════════
-// ██████████████  MODE AR  ██████████████
-// ════════════════════════════════════════════════════════════════
-let arScene, arCamera, arRenderer, arReticle;
-let arSession    = null;
-let arHitTestSrc = null;
-let arRefSpace   = null;
-let arLastHit    = null;   // dernier XRHitTestResult
-let arPoints     = [];     // positions 3D placées [{x,y,z}]
-let arMarkers    = [];     // THREE.Mesh sphères
-
-// Instructions par étape
-const AR_STEPS = [
-  { instr: '1/3 — Pointe vers le coin bas-gauche de la valise', sub: 'Puis tape n\'importe où sur l\'écran' },
-  { instr: '2/3 — Pointe vers le coin bas-droit de la valise',  sub: 'Tape pour valider — largeur sera calculée' },
-  { instr: '3/3 — Pointe vers le coin haut-droit de la valise', sub: 'Tape pour valider — hauteur sera calculée' },
-];
-
-async function startAR() {
-  if (!navigator.xr) return;
-  document.getElementById('screen-home').style.display = 'none';
-
-  // ── Renderer THREE.js ──────────────────────────────────────
-  arRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-  arRenderer.setPixelRatio(window.devicePixelRatio);
-  arRenderer.setSize(window.innerWidth, window.innerHeight);
-  arRenderer.xr.enabled = true;
-  document.getElementById('ar-canvas-container').appendChild(arRenderer.domElement);
-
-  // ── Scène ──────────────────────────────────────────────────
-  arScene  = new THREE.Scene();
-  arCamera = new THREE.PerspectiveCamera();
-  arScene.add(arCamera);
-
-  // Lumière douce pour les sphères
-  arScene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 1));
-
-  // ── Réticule 3D (anneau sur le sol) ───────────────────────
-  const rGeo = new THREE.RingGeometry(0.04, 0.06, 32).rotateX(-Math.PI / 2);
-  const rMat = new THREE.MeshBasicMaterial({ color: 0xFFFFFF, side: THREE.DoubleSide });
-  arReticle = new THREE.Mesh(rGeo, rMat);
-  arReticle.matrixAutoUpdate = false;
-  arReticle.visible = false;
-  arScene.add(arReticle);
-
-  // ── Session WebXR ──────────────────────────────────────────
-  try {
-    arSession = await navigator.xr.requestSession('immersive-ar', {
-      requiredFeatures : ['local', 'hit-test'],
-      optionalFeatures : ['dom-overlay'],
-      domOverlay       : { root: document.getElementById('ar-overlay') }
-    });
-  } catch(e) {
-    alert('Impossible de démarrer la session AR : ' + e);
-    arExit(); return;
-  }
-
-  arRenderer.xr.setReferenceSpaceType('local');
-  await arRenderer.xr.setSession(arSession);
-  arRefSpace = await arSession.requestReferenceSpace('local');
-
-  // ── Source de hit-test (depuis le viewer = centre écran) ───
-  const viewerSpace = await arSession.requestReferenceSpace('viewer');
-  arHitTestSrc = await arSession.requestHitTestSource({ space: viewerSpace });
-
-  // ── Affiche l'overlay DOM ──────────────────────────────────
-  document.getElementById('ar-overlay').style.display = 'block';
-  arUpdateStep(0);
-
-  // ── Boucle de rendu ────────────────────────────────────────
-  arRenderer.setAnimationLoop((timestamp, frame) => {
-    if (!frame) return;
-    const results = frame.getHitTestResults(arHitTestSrc);
-    if (results.length > 0) {
-      arLastHit = results[0];
-      const pose = arLastHit.getPose(arRefSpace);
-      arReticle.visible = true;
-      arReticle.matrix.fromArray(pose.transform.matrix);
-      // Met à jour le réticule CSS : toujours au centre donc rien à faire
-    } else {
-      arLastHit = null;
-      arReticle.visible = false;
-    }
-    arRenderer.render(arScene, arCamera);
-    arDrawOverlay2D();
-  });
-
-  arSession.addEventListener('end', () => { arExit(true); });
-}
-
-// ── Place un point au réticule ────────────────────────────────
-function arPlacePoint() {
-  if (arPoints.length >= 3) return; // mesure terminée, attendre reset
-  if (!arLastHit) {
-    arSetInstr('Aucune surface détectée — bouge lentement le téléphone', '#FFD600');
-    return;
-  }
-  const pose = arLastHit.getPose(arRefSpace);
-  const m    = pose.transform.matrix; // Float32Array[16]
-  // Position = colonne 3 de la matrice 4×4
-  const pos  = { x: m[12], y: m[13], z: m[14] };
-  arPoints.push(pos);
-
-  // ── Sphère marqueur ────────────────────────────────────────
-  const color  = arPoints.length === 3 ? 0x00E5FF : 0xFF3FA6;
-  const sphere = new THREE.Mesh(
-    new THREE.SphereGeometry(0.02, 16, 16),
-    new THREE.MeshPhongMaterial({ color })
-  );
-  sphere.position.set(pos.x, pos.y, pos.z);
-  arScene.add(sphere);
-  arMarkers.push(sphere);
-
-  // ── Ligne entre points consécutifs ─────────────────────────
-  if (arPoints.length >= 2) {
-    const prev = arPoints[arPoints.length - 2];
-    const cur  = arPoints[arPoints.length - 1];
-    const lGeo = new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(prev.x, prev.y, prev.z),
-      new THREE.Vector3(cur.x,  cur.y,  cur.z)
-    ]);
-    const line = new THREE.Line(lGeo, new THREE.LineBasicMaterial({ color: 0xFFFFFF, linewidth: 3 }));
-    arScene.add(line);
-    arMarkers.push(line);
-  }
-
-  // ── Mise à jour UI ────────────────────────────────────────
-  arUpdateDots(arPoints.length);
-
-  if (arPoints.length === 1) {
-    arUpdateStep(1);
-  } else if (arPoints.length === 2) {
-    const largeur = arDist3D(arPoints[0], arPoints[1]) * 100;
-    arSetInstr(`Largeur : ${largeur.toFixed(1)} cm — Pointe maintenant vers le coin haut-droit`, '#00FF99');
-    document.getElementById('ar-sub').textContent = 'Tape pour valider la hauteur';
-  } else if (arPoints.length === 3) {
-    arFinish();
-  }
-}
-
-// ── Calcule et affiche le résultat final ──────────────────────
-function arFinish() {
-  const [P1, P2, P3] = arPoints;
-  const largCm = (arDist3D(P1, P2) * 100).toFixed(1);
-  const hautCm = (arDist3D(P2, P3) * 100).toFixed(1);
-
-  const fits = largCm <= CABIN_MAX_W_CM && hautCm <= CABIN_MAX_H_CM;
-
-  document.getElementById('ar-dims').textContent = `${largCm} × ${hautCm}`;
-  const cabDiv = document.getElementById('ar-cabin');
-  if (fits) {
-    cabDiv.textContent         = '✅ Accepté comme bagage cabine';
-    cabDiv.style.background    = 'rgba(0,255,100,0.15)';
-    cabDiv.style.color         = '#00FF99';
-  } else {
-    cabDiv.textContent         = '❌ Trop grand pour la cabine';
-    cabDiv.style.background    = 'rgba(255,60,60,0.15)';
-    cabDiv.style.color         = '#FF5555';
-  }
-
-  document.getElementById('ar-result-panel').style.display = 'block';
-  document.getElementById('ar-btn-reset').style.display    = 'inline-block';
-
-  // Désactive le tap pour ne pas ajouter de points
-  document.getElementById('ar-tap-area').onclick = null;
-
-  arSetInstr(`📏 ${largCm} cm × ${hautCm} cm`, fits ? '#00FF99' : '#FF5555');
-  document.getElementById('ar-sub').textContent = 'Appuie sur "Recommencer" pour une nouvelle mesure';
-}
-
-// ── Reset mesure ──────────────────────────────────────────────
-function arReset() {
-  // Supprime les sphères et lignes de la scène
-  arMarkers.forEach(m => arScene.remove(m));
-  arMarkers = [];
-  arPoints  = [];
-  arLastHit = null;
-
-  document.getElementById('ar-result-panel').style.display = 'none';
-  document.getElementById('ar-btn-reset').style.display    = 'none';
-  document.getElementById('ar-tap-area').onclick            = arPlacePoint;
-
-  arUpdateDots(0);
-  arUpdateStep(0);
-
-  // Vide le canvas 2D de l'overlay
-  const c = document.getElementById('ar-points-canvas');
-  c.getContext('2d').clearRect(0, 0, c.width, c.height);
-}
-
-// ── Quitter le mode AR ────────────────────────────────────────
-async function arExit(fromEvent = false) {
-  if (arSession && !fromEvent) {
-    try { await arSession.end(); } catch(e) {}
-  }
-  arSession    = null;
-  arHitTestSrc = null;
-  arPoints     = [];
-  arMarkers    = [];
-  if (arRenderer) {
-    arRenderer.setAnimationLoop(null);
-    arRenderer.dispose();
-    const c = document.getElementById('ar-canvas-container');
-    c.innerHTML = '';
-  }
-  document.getElementById('ar-overlay').style.display = 'none';
-  document.getElementById('screen-home').style.display = 'flex';
-}
-
-// ── Dessin 2D overlay (projeter les points sur le canvas 2D) ──
-function arDrawOverlay2D() {
-  const canvas = document.getElementById('ar-points-canvas');
-  const W = window.innerWidth, H = window.innerHeight;
-  if (canvas.width !== W || canvas.height !== H) {
-    canvas.width = W; canvas.height = H;
-  }
-  const ctx = canvas.getContext('2d');
-  ctx.clearRect(0, 0, W, H);
-  if (arPoints.length < 2) return;
-
-  // Projette les points 3D en 2D via la caméra THREE.js
-  const proj2D = arPoints.map(p => {
-    const v = new THREE.Vector3(p.x, p.y, p.z);
-    v.project(arCamera);   // NDC [-1, 1]
-    return {
-      x: (v.x + 1) * 0.5 * W,
-      y: (1 - v.y) * 0.5 * H
+    // Transition de l'accueil vers l'AR
+    window.startAR = function() {
+      document.getElementById('home-screen').style.display = 'none';
+      document.getElementById('ar-screen').style.display = 'block';
+      document.body.classList.add('camera-active');
+      initAR();
     };
-  });
 
-  // Dessine les segments avec distance
-  ctx.lineWidth   = 3;
-  ctx.strokeStyle = 'white';
-  ctx.setLineDash([6, 4]);
+    let scene, camera, renderer, reticle;
+    let hitTestSource = null;
+    let hitTestSourceRequested = false;
+    let points = [];
+    const arInfoDiv = document.getElementById('ar-info');
 
-  for (let i = 0; i < proj2D.length - 1; i++) {
-    const a = proj2D[i], b = proj2D[i + 1];
-    const dist = (arDist3D(arPoints[i], arPoints[i + 1]) * 100).toFixed(1);
+    function initAR() {
+      scene = new THREE.Scene();
+      camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
+      scene.add(new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1));
 
-    ctx.beginPath();
-    ctx.moveTo(a.x, a.y);
-    ctx.lineTo(b.x, b.y);
-    ctx.stroke();
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+      renderer.setPixelRatio(window.devicePixelRatio);
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.xr.enabled = true;
+      document.getElementById('ar-screen').appendChild(renderer.domElement);
 
-    // Label distance au milieu du segment
-    const mx = (a.x + b.x) / 2;
-    const my = (a.y + b.y) / 2;
-    ctx.setLineDash([]);
-    ctx.font         = 'bold 14px sans-serif';
-    ctx.fillStyle    = 'rgba(0,0,0,0.6)';
-    const label      = `${dist} cm`;
-    const tw         = ctx.measureText(label).width;
-    ctx.fillRect(mx - tw/2 - 6, my - 12, tw + 12, 20);
-    ctx.fillStyle = 'white';
-    ctx.fillText(label, mx - tw/2, my + 2);
-    ctx.setLineDash([6, 4]);
-  }
+      document.getElementById('ar-screen').appendChild(ARButton.createButton(renderer, {
+        requiredFeatures: ['hit-test'],
+        optionalFeatures: ['dom-overlay'],
+        domOverlay: { root: document.getElementById('ar-screen') }
+      }));
 
-  // Cercles sur les points placés
-  ctx.setLineDash([]);
-  proj2D.forEach((p, i) => {
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, 10, 0, Math.PI * 2);
-    ctx.fillStyle = i === 2 ? '#00E5FF' : '#FF3FA6';
-    ctx.fill();
-    ctx.strokeStyle = 'white';
-    ctx.lineWidth   = 2;
-    ctx.stroke();
-  });
-}
+      reticle = new THREE.Mesh(
+        new THREE.RingGeometry(0.04, 0.05, 32).rotateX(-Math.PI / 2),
+        new THREE.MeshBasicMaterial({ color: 0x00E5FF }) // Cyan OUIGO
+      );
+      reticle.matrixAutoUpdate = false;
+      reticle.visible = false;
+      scene.add(reticle);
 
-// ── Utilitaires AR ────────────────────────────────────────────
-function arDist3D(a, b) {
-  return Math.sqrt((a.x-b.x)**2 + (a.y-b.y)**2 + (a.z-b.z)**2);
-}
+      const controller = renderer.xr.getController(0);
+      controller.addEventListener('select', onSelect);
+      scene.add(controller);
 
-function arSetInstr(txt, color = 'white') {
-  const d = document.getElementById('ar-instr');
-  d.textContent  = txt;
-  d.style.color  = color;
-}
+      renderer.setAnimationLoop(renderAR);
+    }
 
-function arUpdateStep(step) {
-  if (step < AR_STEPS.length) {
-    document.getElementById('ar-instr').textContent = AR_STEPS[step].instr;
-    document.getElementById('ar-instr').style.color = 'white';
-    document.getElementById('ar-sub').textContent   = AR_STEPS[step].sub;
-  }
-}
+    function onSelect() {
+      if (!reticle.visible) return;
+      const position = new THREE.Vector3();
+      position.setFromMatrixPosition(reticle.matrix);
 
-function arUpdateDots(filled) {
-  for (let i = 0; i < 3; i++) {
-    const dot = document.getElementById(`dot-${i}`);
-    dot.classList.remove('done', 'active');
-    if (i < filled)         dot.classList.add('done');
-    else if (i === filled)  dot.classList.add('active');
-  }
-}
+      const sphere = new THREE.Mesh(
+        new THREE.SphereGeometry(0.02, 16, 16),
+        new THREE.MeshBasicMaterial({ color: 0xFF3FA6 }) // Pink OUIGO
+      );
+      sphere.position.copy(position);
+      scene.add(sphere);
+      points.push(position);
 
+      if (points.length === 1) {
+        arInfoDiv.innerHTML = "📍 1er Point fixé.<br>Cliquez sur le 2ème point.";
+      } else if (points.length === 2) {
+        const distanceMetres = points[0].distanceTo(points[1]);
+        const distanceCm = (distanceMetres * 100).toFixed(1);
+        arInfoDiv.innerHTML = `📏 Distance : ${distanceCm} cm<br><span style="font-size:12px; font-weight:normal;">Rechargez la page pour recommencer</span>`;
 
-// ════════════════════════════════════════════════════════════════
-// ██████████████  MODE YOLO (Photo)  ██████████████
-// ════════════════════════════════════════════════════════════════
+        const material = new THREE.LineBasicMaterial({ color: 0xffffff, linewidth: 4 });
+        const geometry = new THREE.BufferGeometry().setFromPoints([points[0], points[1]]);
+        scene.add(new THREE.Line(geometry, material));
+      }
+    }
 
-// ── Constantes ────────────────────────────────────────────────
-const TARGET_CLASSES = [24, 28, 32, 72];
-const CLASS_INFO = {
-  24: { label: 'Sac à dos',      color: '#00E5FF' },
-  28: { label: 'Valise',         color: '#00E5FF' },
-  32: { label: 'Ballon de foot', color: '#FF3FA6' },
-  72: { label: 'Valise',         color: '#00E5FF' }  // frigo = alias valise
-};
-const BALL_D_MM      = 220.0;
-const SCORE_THRESHOLD = 0.05;
+    function renderAR(timestamp, frame) {
+      if (frame) {
+        const referenceSpace = renderer.xr.getReferenceSpace();
+        const session = renderer.xr.getSession();
 
-// ── État ──────────────────────────────────────────────────────
-let yoloModel, yoloAnimId;
-let yoloLastDetections = [];
-let yoloPhotoImg       = null;
-let yoloBagBox         = null;
-let yoloBallBox        = null;
-let yoloDetBoxes       = [];
+        if (hitTestSourceRequested === false) {
+          session.requestReferenceSpace('viewer').then((viewerSpace) => {
+            session.requestHitTestSource({ space: viewerSpace }).then((source) => { hitTestSource = source; });
+          });
+          session.addEventListener('end', () => { hitTestSourceRequested = false; hitTestSource = null; });
+          hitTestSourceRequested = true;
+        }
 
-const debugLines = [];
-function dlog(msg, cls = '') {
-  console.log(msg);
-  debugLines.push(`<div class="debug-line ${cls}">${msg}</div>`);
-  const panel = document.getElementById('debug-panel');
-  if (panel && panel.classList.contains('visible')) {
-    panel.innerHTML  = debugLines.join('');
-    panel.scrollTop  = panel.scrollHeight;
-  }
-}
-function toggleDebug() {
-  const p = document.getElementById('debug-panel');
-  p.classList.toggle('visible');
-  if (p.classList.contains('visible')) {
-    p.innerHTML = debugLines.join('');
-    p.scrollTop = p.scrollHeight;
-  }
-}
+        if (hitTestSource) {
+          const hitTestResults = frame.getHitTestResults(hitTestSource);
+          if (hitTestResults.length) {
+            const hit = hitTestResults[0];
+            reticle.visible = true;
+            reticle.matrix.fromArray(hit.getPose(referenceSpace).transform.matrix);
+          } else {
+            reticle.visible = false;
+          }
+        }
+      }
+      renderer.render(scene, camera);
+    }
+  </script>
 
-let yoloVideo, yoloCanvasLive, yoloCanvasPhoto, yoloCtxLive, yoloCtxPhoto;
-let yoloStatusDiv, yoloInstrDiv;
+  <script>
+    const TARGET_CLASSES = [24, 28, 32, 72];
+    const CLASS_INFO = {
+      24: { label: 'Sac à dos',      color: '#00E5FF' },
+      28: { label: 'Valise',         color: '#00E5FF' },
+      32: { label: 'Ballon de foot', color: '#FF3FA6' },
+      72: { label: 'Valise',         color: '#00E5FF' }
+    };
+    const BALL_D_MM = 220.0;
+    const CABIN_MAX_W_CM = 55;
+    const CABIN_MAX_H_CM = 35;
 
-function initYoloRefs() {
-  yoloVideo       = document.getElementById('video');
-  yoloCanvasLive  = document.getElementById('canvas-live');
-  yoloCanvasPhoto = document.getElementById('canvas-photo');
-  yoloCtxLive     = yoloCanvasLive.getContext('2d');
-  yoloCtxPhoto    = yoloCanvasPhoto.getContext('2d');
-  yoloStatusDiv   = document.getElementById('status');
-  yoloInstrDiv    = document.getElementById('instr');
-}
+    let model, animId;
+    let lastDetections = [];
+    let photoImg = null;
+    let bagBox = null, ballBox = null;
+    let detectionBoxes = [];
 
-async function startYOLO() {
-  document.getElementById('screen-home').style.display = 'none';
-  document.getElementById('yolo-ui').style.display     = 'flex';
-  initYoloRefs();
-  await yoloSetupCamera();
-  await yoloLoadModel();
-}
+    const video = document.getElementById('video');
+    const canvasLive = document.getElementById('canvas-live');
+    const canvasPhoto = document.getElementById('canvas-photo');
+    let ctxLive, ctxPhoto;
+    const yoloStatus = document.getElementById('yolo-status');
 
-// ── Caméra ────────────────────────────────────────────────────
-async function yoloSetupCamera() {
-  const stream = await navigator.mediaDevices.getUserMedia({
-    video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
-    audio: false
-  });
-  yoloVideo.srcObject = stream;
-  return new Promise(r => yoloVideo.onloadedmetadata = r);
-}
+    // Transition de l'accueil vers YOLO
+    window.startYOLO = function() {
+      document.getElementById('home-screen').style.display = 'none';
+      document.getElementById('yolo-screen').style.display = 'block';
+      document.body.classList.add('camera-active');
 
-// ── Modèle ────────────────────────────────────────────────────
-async function yoloLoadModel() {
-  try {
-    dlog('⏳ Chargement modèle depuis ./model/model.json …', 'debug-info');
-    yoloModel = await tf.loadGraphModel('./model/model.json');
-    dlog('✅ Modèle chargé !', 'debug-ok');
-    dlog(`📐 Inputs  : ${JSON.stringify(yoloModel.inputs  ? yoloModel.inputs.map(i=>({name:i.name,shape:i.shape}))  : 'n/a')}`, 'debug-info');
-    dlog(`📐 Outputs : ${JSON.stringify(yoloModel.outputs ? yoloModel.outputs.map(o=>({name:o.name,shape:o.shape})) : 'n/a')}`, 'debug-info');
-    yoloStatusDiv.textContent = 'Modèle prêt — pointe vers ton bagage';
-    yoloInstrDiv.textContent  = 'Place le ballon ⚽ à côté du bagage puis capture';
-    yoloDetectLoop();
-  } catch(e) {
-    dlog('❌ Erreur chargement : ' + e, 'debug-error');
-    yoloStatusDiv.textContent = 'Erreur chargement modèle : ' + e;
-  }
-}
+      ctxLive = canvasLive.getContext('2d');
+      ctxPhoto = canvasPhoto.getContext('2d');
 
-// ── Parsing YOLO (détection auto du format) ───────────────────
-async function parseYOLO(rawOutput) {
-  let tensor = rawOutput;
-  if (Array.isArray(tensor)) {
-    dlog(`⚠️ Sortie Array[${tensor.length}], prise de [0]`, 'debug-warn');
-    tensor = tensor[0];
-  }
-  if (!(tensor instanceof tf.Tensor)) {
-    const keys = Object.keys(tensor);
-    dlog(`⚠️ Sortie objet, clés: ${keys.join(', ')}`, 'debug-warn');
-    tensor = tensor[keys[0]];
-  }
-  const shape = tensor.shape;
-  dlog(`🔍 Forme sortie : [${shape}]`, 'debug-info');
-  let res;
-  if      (shape.length === 3 && shape[1] === 84) { dlog('📊 Format A [1,84,8400]', 'debug-info');  res = tensor.transpose([0,2,1]).squeeze(); }
-  else if (shape.length === 3 && shape[2] === 84) { dlog('📊 Format B [1,8400,84]', 'debug-info');  res = tensor.squeeze(); }
-  else {
-    dlog(`⚠️ Format inconnu [${shape}]`, 'debug-warn');
-    try { res = tensor.transpose([0,2,1]).squeeze(); } catch { res = tensor.squeeze(); }
-  }
+      initYOLO();
+    };
 
-  const rawBoxes  = res.slice([0,0], [-1,4]);
-  const rawScores = res.slice([0,4], [-1,80]);
-  const maxScores = rawScores.max(1);
-  const classIdx  = rawScores.argMax(1).dataSync();
-  const [xc,yc,w,h] = tf.split(rawBoxes, 4, 1);
-  const y1 = yc.sub(h.div(2)), x1 = xc.sub(w.div(2));
-  const y2 = yc.add(h.div(2)), x2 = xc.add(w.div(2));
-  const boxes  = tf.concat([y1,x1,y2,x2], 1);
-  const nmsIdx = await tf.image.nonMaxSuppressionAsync(boxes, maxScores, 10, 0.5, SCORE_THRESHOLD);
-  const idxArr = nmsIdx.arraySync();
-  const boxArr = boxes.arraySync();
-  const scrArr = maxScores.arraySync();
+    async function setupCamera() {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+        audio: false
+      });
+      video.srcObject = stream;
+      return new Promise(r => video.onloadedmetadata = r);
+    }
 
-  const dets = idxArr
-    .map(i => ({ box: boxArr[i], score: scrArr[i], cls: classIdx[i] }))
-    .filter(d => TARGET_CLASSES.includes(d.cls) && d.score > SCORE_THRESHOLD);
+    async function initYOLO() {
+      yoloStatus.textContent = 'Accès à la caméra...';
+      await setupCamera();
+      yoloStatus.textContent = 'Chargement de l\'IA...';
+      try {
+        model = await tf.loadGraphModel('./model/model.json');
+        yoloStatus.textContent = 'Placez le ballon ⚽ à côté du bagage';
+        document.getElementById('btn-capture').style.display = 'inline-block';
+        detectLoop();
+      } catch(e) {
+        yoloStatus.textContent = 'Erreur : Impossible de charger le modèle.';
+      }
+    }
 
-  dlog(`🎯 Détections : ${dets.length}`, dets.length > 0 ? 'debug-ok' : 'debug-warn');
-  return dets;
-}
+    async function parseYOLO(rawOutput) {
+      let tensor = rawOutput;
+      if (Array.isArray(tensor)) tensor = tensor[0];
+      if (!(tensor instanceof tf.Tensor)) tensor = tensor[Object.keys(tensor)[0]];
 
-// ── Boucle temps réel ─────────────────────────────────────────
-function yoloDetectLoop() {
-  yoloCanvasLive.width  = yoloVideo.videoWidth  || 640;
-  yoloCanvasLive.height = yoloVideo.videoHeight || 480;
-  async function frame() {
-    if (!yoloModel || yoloVideo.paused || yoloVideo.ended) { yoloAnimId = requestAnimationFrame(frame); return; }
-    tf.engine().startScope();
-    try {
-      const img     = tf.browser.fromPixels(yoloVideo);
-      const resized = tf.image.resizeBilinear(img, [640,640]);
-      const input   = resized.div(255.0).expandDims(0);
-      const output  = yoloModel.execute(input);
-      const dets    = await parseYOLO(output);
-      yoloLastDetections = dets;
-      yoloRenderLive(dets);
-    } catch(e) {}
-    tf.engine().endScope();
-    yoloAnimId = requestAnimationFrame(frame);
-  }
-  yoloAnimId = requestAnimationFrame(frame);
-}
+      let res;
+      const shape = tensor.shape;
+      if (shape.length === 3 && shape[1] === 84) {
+        res = tensor.transpose([0, 2, 1]).squeeze();
+      } else if (shape.length === 3 && shape[2] === 84) {
+        res = tensor.squeeze();
+      } else {
+        try { res = tensor.transpose([0, 2, 1]).squeeze(); } catch { res = tensor.squeeze(); }
+      }
 
-function yoloRenderLive(dets) {
-  yoloCtxLive.clearRect(0, 0, yoloCanvasLive.width, yoloCanvasLive.height);
-  const sx = yoloCanvasLive.width  / 640;
-  const sy = yoloCanvasLive.height / 640;
-  const hasBall = dets.some(d => d.cls === 32);
-  const hasBag  = dets.some(d => [24,28,72].includes(d.cls));
-  dets.forEach(d => {
-    let [y1,x1,y2,x2] = d.box;
-    x1*=sx; x2*=sx; y1*=sy; y2*=sy;
-    const info  = CLASS_INFO[d.cls];
-    const label = `${info.label} (${Math.round(d.score*100)}%)`;
-    yoloCtxLive.strokeStyle = info.color;
-    yoloCtxLive.lineWidth   = 3;
-    yoloCtxLive.strokeRect(x1, y1, x2-x1, y2-y1);
-    yoloCtxLive.font = 'bold 15px sans-serif';
-    const tw = yoloCtxLive.measureText(label).width;
-    yoloCtxLive.fillStyle = info.color;
-    yoloCtxLive.fillRect(x1, y1>22?y1-22:0, tw+10, 20);
-    yoloCtxLive.fillStyle = '#000';
-    yoloCtxLive.fillText(label, x1+5, y1>24?y1-6:16);
-  });
-  if (hasBall && hasBag) {
-    yoloStatusDiv.textContent = '✅ Ballon + bagage détectés — capture !'; yoloStatusDiv.style.color = '#00FF99';
-  } else if (hasBall) {
-    yoloStatusDiv.textContent = '⚽ Ballon détecté — place une valise'; yoloStatusDiv.style.color = '#FF3FA6';
-  } else if (hasBag) {
-    yoloStatusDiv.textContent = '🧳 Bagage détecté — place un ballon taille 5'; yoloStatusDiv.style.color = '#00E5FF';
-  } else {
-    yoloStatusDiv.textContent = 'Pointe vers ton bagage et un ballon ⚽'; yoloStatusDiv.style.color = '#888';
-  }
-}
+      const rawBoxes = res.slice([0, 0], [-1, 4]);
+      const rawScores = res.slice([0, 4], [-1, 80]);
+      const maxScores = rawScores.max(1);
+      const classIdx = rawScores.argMax(1).dataSync();
 
-// ── Inférence sur la photo figée ──────────────────────────────
-async function yoloRunOnPhoto() {
-  if (!yoloModel) return [];
-  tf.engine().startScope();
-  try {
-    const img     = tf.browser.fromPixels(yoloCanvasPhoto);
-    const resized = tf.image.resizeBilinear(img, [640,640]);
-    const input   = resized.div(255.0).expandDims(0);
-    const output  = yoloModel.execute(input);
-    return await parseYOLO(output);
-  } catch(e) { dlog('❌ Inférence photo : '+e, 'debug-error'); return []; }
-  finally { tf.engine().endScope(); }
-}
+      const [xc, yc, w, h] = tf.split(rawBoxes, 4, 1);
+      const y1 = yc.sub(h.div(2)), x1 = xc.sub(w.div(2));
+      const y2 = yc.add(h.div(2)), x2 = xc.add(w.div(2));
+      const boxes = tf.concat([y1, x1, y2, x2], 1);
 
-// ── Test boîtes ───────────────────────────────────────────────
-function drawTestBoxes() {
-  if (!yoloPhotoImg) return;
-  yoloCtxPhoto.drawImage(yoloPhotoImg, 0, 0);
-  const W = yoloCanvasPhoto.width, H = yoloCanvasPhoto.height;
-  const bX=W*0.1, bY=H*0.3, bS=Math.min(W,H)*0.18;
-  yoloCtxPhoto.strokeStyle='#FF3FA6'; yoloCtxPhoto.lineWidth=5;
-  yoloCtxPhoto.strokeRect(bX,bY,bS,bS);
-  yoloCtxPhoto.font='bold 16px sans-serif';
-  yoloCtxPhoto.fillStyle='#FF3FA6'; yoloCtxPhoto.fillRect(bX,bY-24,200,22);
-  yoloCtxPhoto.fillStyle='#000'; yoloCtxPhoto.fillText('⚽ BALLON TEST',bX+4,bY-6);
-  const gX=W*0.38, gY=H*0.2, gW=W*0.45, gH=H*0.6;
-  yoloCtxPhoto.strokeStyle='#00E5FF'; yoloCtxPhoto.lineWidth=3;
-  yoloCtxPhoto.strokeRect(gX,gY,gW,gH);
-  yoloCtxPhoto.fillStyle='#00E5FF'; yoloCtxPhoto.fillRect(gX,gY-24,220,22);
-  yoloCtxPhoto.fillStyle='#000'; yoloCtxPhoto.fillText('🧳 BAGAGE TEST',gX+4,gY-6);
-  yoloStatusDiv.textContent='🟦 Boîtes TEST — canvas OK !'; yoloStatusDiv.style.color='#00FF99';
-}
+      let nmsIdx = await tf.image.nonMaxSuppressionAsync(boxes, maxScores, 10, 0.5, 0.05);
+      let idxArr = nmsIdx.arraySync();
+      const boxArr = boxes.arraySync();
+      const scrArr = await maxScores.data();
 
-// ── Capture photo ─────────────────────────────────────────────
-async function capturePhoto() {
-  cancelAnimationFrame(yoloAnimId);
-  yoloVideo.pause();
-  yoloCanvasPhoto.width  = yoloVideo.videoWidth;
-  yoloCanvasPhoto.height = yoloVideo.videoHeight;
-  yoloCtxPhoto.drawImage(yoloVideo, 0, 0);
-  yoloPhotoImg = new Image();
-  yoloPhotoImg.src = yoloCanvasPhoto.toDataURL();
-  dlog(`📸 Photo ${yoloCanvasPhoto.width}×${yoloCanvasPhoto.height}`, 'debug-info');
-  yoloBagBox = null; yoloBallBox = null; yoloDetBoxes = [];
+      return idxArr
+        .map(i => ({ box: boxArr[i], score: scrArr[i], cls: classIdx[i] }))
+        .filter(d => TARGET_CLASSES.includes(d.cls) && d.score > 0.05);
+    }
 
-  yoloStatusDiv.textContent = '🔍 Analyse en cours…'; yoloStatusDiv.style.color = '#FFD600';
+    function detectLoop() {
+      canvasLive.width = video.videoWidth || 640;
+      canvasLive.height = video.videoHeight || 480;
 
-  let dets = await yoloRunOnPhoto();
-  if (dets.length === 0 && yoloLastDetections.length > 0) {
-    dlog('⚠️ Fallback vers détections temps réel', 'debug-warn');
-    dets = yoloLastDetections;
-  }
+      async function frame() {
+        if (!model || video.paused || video.ended) { animId = requestAnimationFrame(frame); return; }
+        tf.engine().startScope();
+        try {
+          const img = tf.browser.fromPixels(video);
+          const resized = tf.image.resizeBilinear(img, [640, 640]);
+          const input = resized.div(255.0).expandDims(0);
+          const output = model.execute(input);
+          const dets = await parseYOLO(output);
+          lastDetections = dets;
+          renderLive(dets);
+        } catch(e) {}
+        tf.engine().endScope();
+        animId = requestAnimationFrame(frame);
+      }
+      animId = requestAnimationFrame(frame);
+    }
 
-  if (dets.length > 0) {
-    const sx = yoloCanvasPhoto.width/640, sy = yoloCanvasPhoto.height/640;
-    yoloDetBoxes = dets.map(d => { let[y1,x1,y2,x2]=d.box; return{x1:x1*sx,y1:y1*sy,x2:x2*sx,y2:y2*sy,cls:d.cls,score:d.score}; });
-    const bDets = yoloDetBoxes.filter(d=>d.cls===32);
-    if (bDets.length) yoloBallBox = bDets.reduce((a,b)=>b.score>a.score?b:a);
-    const gDets = yoloDetBoxes.filter(d=>[24,28,72].includes(d.cls));
-    if (gDets.length) yoloBagBox  = gDets.reduce((a,b)=>b.score>a.score?b:a);
-    yoloDrawDetections();
-  }
+    function renderLive(dets) {
+      ctxLive.clearRect(0, 0, canvasLive.width, canvasLive.height);
+      const sx = canvasLive.width / 640;
+      const sy = canvasLive.height / 640;
+      const hasBall = dets.some(d => d.cls === 32);
+      const hasBag = dets.some(d => [24, 28, 72].includes(d.cls));
 
-  yoloVideo.style.display       = 'none';
-  yoloCanvasLive.style.display  = 'none';
-  yoloCanvasPhoto.style.display = 'block';
+      dets.forEach(d => {
+        let [y1, x1, y2, x2] = d.box;
+        x1 *= sx; x2 *= sx; y1 *= sy; y2 *= sy;
+        const info = CLASS_INFO[d.cls];
+        ctxLive.strokeStyle = info.color;
+        ctxLive.lineWidth = 4;
+        ctxLive.strokeRect(x1, y1, x2 - x1, y2 - y1);
+      });
 
-  document.getElementById('btn-capture').style.display    = 'none';
-  document.getElementById('btn-retake').style.display     = 'inline-block';
-  document.getElementById('btn-test-boxes').style.display = 'inline-block';
-  document.getElementById('btn-measure').style.display    = (yoloBallBox && yoloBagBox) ? 'inline-block' : 'none';
+      if (hasBall && hasBag) {
+        yoloStatus.textContent = '✅ Parfait ! Prenez la photo.';
+        yoloStatus.style.color = '#00FF99';
+      } else {
+        yoloStatus.textContent = 'Visez le bagage et le ballon ⚽';
+        yoloStatus.style.color = 'white';
+      }
+    }
 
-  if (yoloBagBox && yoloBallBox) {
-    yoloStatusDiv.textContent = `✅ ${CLASS_INFO[yoloBagBox.cls].label} + ballon — appuie sur Mesurer !`;
-    yoloStatusDiv.style.color = '#00FF99';
-  } else if (!yoloBallBox && !yoloBagBox) {
-    yoloStatusDiv.textContent = '❌ Rien détecté — essaie "Tester boîtes" pour vérifier';
-    yoloStatusDiv.style.color = '#FF3FA6';
-  } else if (!yoloBallBox) {
-    yoloStatusDiv.textContent = '❌ Ballon non détecté — reprends avec un ballon taille 5';
-    yoloStatusDiv.style.color = '#FF3FA6';
-  } else {
-    yoloStatusDiv.textContent = '❌ Bagage non détecté — reprends';
-    yoloStatusDiv.style.color = '#FF3FA6';
-  }
-}
+    window.capturePhoto = async function() {
+      cancelAnimationFrame(animId);
+      video.pause();
 
-function yoloDrawDetections() {
-  yoloDetBoxes.forEach(d => {
-    const info = CLASS_INFO[d.cls];
-    yoloCtxPhoto.strokeStyle = info.color;
-    yoloCtxPhoto.lineWidth   = d.cls===32 ? 5 : 3;
-    yoloCtxPhoto.strokeRect(d.x1, d.y1, d.x2-d.x1, d.y2-d.y1);
-    const label = `${info.label} (${Math.round(d.score*100)}%)`;
-    yoloCtxPhoto.font = 'bold 18px sans-serif';
-    const tw = yoloCtxPhoto.measureText(label).width;
-    yoloCtxPhoto.fillStyle = info.color;
-    yoloCtxPhoto.fillRect(d.x1, d.y1>26?d.y1-26:0, tw+10, 24);
-    yoloCtxPhoto.fillStyle = '#000';
-    yoloCtxPhoto.fillText(label, d.x1+5, d.y1>26?d.y1-5:19);
-    if (d.cls===32) { yoloCtxPhoto.font='22px sans-serif'; yoloCtxPhoto.fillText('📐',d.x1+4,d.y2-6); }
-  });
-}
+      canvasPhoto.width = video.videoWidth;
+      canvasPhoto.height = video.videoHeight;
+      ctxPhoto.drawImage(video, 0, 0);
 
-// ── Mesure ────────────────────────────────────────────────────
-function measure() {
-  if (!yoloBallBox) { yoloStatusDiv.textContent='❌ Pas de ballon !'; return; }
-  if (!yoloBagBox)  { yoloStatusDiv.textContent='❌ Pas de bagage !'; return; }
-  const bW = yoloBallBox.x2-yoloBallBox.x1, bH = yoloBallBox.y2-yoloBallBox.y1;
-  const ratio  = ((bW/BALL_D_MM)+(bH/BALL_D_MM))/2;
-  const bagWcm = ((yoloBagBox.x2-yoloBagBox.x1)/ratio/10).toFixed(1);
-  const bagHcm = ((yoloBagBox.y2-yoloBagBox.y1)/ratio/10).toFixed(1);
-  const fits   = bagWcm <= CABIN_MAX_W_CM && bagHcm <= CABIN_MAX_H_CM;
-  const cab    = document.getElementById('cabin-check');
-  if (fits) { cab.textContent='✅ Accepté en cabine'; cab.style.background='rgba(0,255,100,0.15)'; cab.style.color='#00FF99'; }
-  else      { cab.textContent='❌ Trop grand pour la cabine'; cab.style.background='rgba(255,60,60,0.15)'; cab.style.color='#FF5555'; }
-  document.getElementById('res-class').textContent = CLASS_INFO[yoloBagBox.cls].label;
-  document.getElementById('res-dims').textContent  = `${bagWcm} × ${bagHcm}`;
-  document.getElementById('conf').textContent      = `Confiance YOLO : ${Math.round(yoloBagBox.score*100)}% — référence ⚽ (22cm)`;
-  document.getElementById('yolo-result').style.display = 'block';
-  yoloStatusDiv.textContent='📏 Mesure terminée !'; yoloStatusDiv.style.color='#00FF99';
-}
+      bagBox = null; ballBox = null; detectionBoxes = [];
+      yoloStatus.textContent = 'Analyse de l\'image...';
 
-// ── Reprendre ─────────────────────────────────────────────────
-function retake() {
-  yoloBagBox=null; yoloBallBox=null; yoloPhotoImg=null; yoloDetBoxes=[];
-  yoloCanvasPhoto.style.display = 'none';
-  yoloCanvasLive.style.display  = 'block';
-  yoloVideo.style.display       = 'block';
-  yoloVideo.play();
-  document.getElementById('btn-capture').style.display    = 'inline-block';
-  document.getElementById('btn-retake').style.display     = 'none';
-  document.getElementById('btn-measure').style.display    = 'none';
-  document.getElementById('btn-test-boxes').style.display = 'none';
-  document.getElementById('yolo-result').style.display    = 'none';
-  document.getElementById('cabin-check').textContent      = '';
-  yoloStatusDiv.textContent='Pointe vers ton bagage et un ballon ⚽'; yoloStatusDiv.style.color='#888';
-  yoloDetectLoop();
-}
+      let dets = [];
+      tf.engine().startScope();
+      try {
+        const img = tf.browser.fromPixels(canvasPhoto);
+        const resized = tf.image.resizeBilinear(img, [640, 640]);
+        const input = resized.div(255.0).expandDims(0);
+        const output = model.execute(input);
+        dets = await parseYOLO(output);
+      } catch(e) {}
+      tf.engine().endScope();
 
-</script>
+      if (dets.length === 0) dets = lastDetections; // Fallback sur la dernière image vidéo
+
+      const sx = canvasPhoto.width / 640;
+      const sy = canvasPhoto.height / 640;
+      detectionBoxes = dets.map(d => {
+        let [y1, x1, y2, x2] = d.box;
+        return { x1: x1*sx, y1: y1*sy, x2: x2*sx, y2: y2*sy, cls: d.cls, score: d.score };
+      });
+
+      const ballDets = detectionBoxes.filter(d => d.cls === 32);
+      if (ballDets.length) ballBox = ballDets.reduce((a,b) => b.score>a.score?b:a);
+      const bagDets = detectionBoxes.filter(d => [24,28,72].includes(d.cls));
+      if (bagDets.length) bagBox = bagDets.reduce((a,b) => b.score>a.score?b:a);
+
+      drawDetections();
+
+      video.style.display = 'none';
+      canvasLive.style.display = 'none';
+      canvasPhoto.style.display = 'block';
+
+      document.getElementById('btn-capture').style.display = 'none';
+      document.getElementById('btn-retake').style.display = 'inline-block';
+      document.getElementById('btn-measure').style.display = (ballBox && bagBox) ? 'inline-block' : 'none';
+
+      if (bagBox && ballBox) yoloStatus.textContent = '✅ Objets détectés. Vous pouvez mesurer.';
+      else yoloStatus.textContent = '❌ Objet manquant, veuillez reprendre la photo.';
+    };
+
+    function drawDetections() {
+      detectionBoxes.forEach(d => {
+        const info = CLASS_INFO[d.cls];
+        ctxPhoto.strokeStyle = info.color;
+        ctxPhoto.lineWidth = d.cls === 32 ? 6 : 4;
+        ctxPhoto.strokeRect(d.x1, d.y1, d.x2 - d.x1, d.y2 - d.y1);
+      });
+    }
+
+    window.measure = function() {
+      if (!ballBox || !bagBox) return;
+      const ballWpx = ballBox.x2 - ballBox.x1;
+      const ballHpx = ballBox.y2 - ballBox.y1;
+      const ratio = ((ballWpx / BALL_D_MM) + (ballHpx / BALL_D_MM)) / 2;
+      const bagWcm = (((bagBox.x2 - bagBox.x1) / ratio) / 10).toFixed(1);
+      const bagHcm = (((bagBox.y2 - bagBox.y1) / ratio) / 10).toFixed(1);
+
+      const fitsCabin = bagWcm <= CABIN_MAX_W_CM && bagHcm <= CABIN_MAX_H_CM;
+      const cabinDiv = document.getElementById('cabin-check');
+
+      if (fitsCabin) {
+        cabinDiv.textContent = '✅ Format Cabine OK';
+        cabinDiv.style.background = 'rgba(0, 229, 255, 0.2)';
+        cabinDiv.style.color = 'var(--ouigo-blue)';
+      } else {
+        cabinDiv.textContent = '❌ Format trop grand';
+        cabinDiv.style.background = 'rgba(255, 63, 166, 0.2)';
+        cabinDiv.style.color = 'var(--ouigo-pink)';
+      }
+
+      document.getElementById('res-class').textContent = CLASS_INFO[bagBox.cls].label;
+      document.getElementById('res-dims').textContent = `${bagWcm} × ${bagHcm}`;
+      document.getElementById('yolo-result').style.display = 'block';
+      yoloStatus.textContent = '';
+      document.getElementById('btn-measure').style.display = 'none';
+    };
+
+    window.retake = function() {
+      bagBox = null; ballBox = null; photoImg = null; detectionBoxes = [];
+      canvasPhoto.style.display = 'none';
+      canvasLive.style.display = 'block';
+      video.style.display = 'block';
+      video.play();
+      document.getElementById('btn-capture').style.display = 'inline-block';
+      document.getElementById('btn-retake').style.display = 'none';
+      document.getElementById('btn-measure').style.display = 'none';
+      document.getElementById('yolo-result').style.display = 'none';
+      yoloStatus.textContent = 'Visez le bagage et le ballon ⚽';
+      detectLoop();
+    };
+  </script>
 </body>
 </html>
