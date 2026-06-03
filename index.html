@@ -240,7 +240,7 @@
       renderer.domElement.style.zIndex = '-1';
       document.body.appendChild(renderer.domElement);
 
-      // CORRECTION 2 : On cible UNIQUEMENT l'interface transparente (#ar-ui-layer) pour l'overlay
+      // CORRECTION 2 : On cible UNIQUEMENT l'interface transparente (#ar-ui-layer) pour l'overlay qu'on
       const arButton = ARButton.createButton(renderer, {
         requiredFeatures: ['hit-test'],
         optionalFeatures: ['dom-overlay'],
@@ -282,6 +282,17 @@
         const distanceMetres = points[0].distanceTo(points[1]);
         const distanceCm = (distanceMetres * 100).toFixed(1);
         arInfoDiv.innerHTML = `📏 Distance : ${distanceCm} cm<br><span style="font-size:12px; font-weight:normal;">Rechargez la page pour recommencer</span>`;
+        
+        // --- MISE À JOUR DU MESSAGE AR ---
+        arInfoDiv.style.pointerEvents = "auto"; // Permet de lire le texte
+        arInfoDiv.innerHTML = `
+          <div style="font-size: 24px; color: var(--ouigo-pink);">📏 ${distanceCm} cm</div>
+          <div style="font-size: 13px; margin-top: 10px; font-style: italic; color: #555;">
+            Ceci est une estimation "à la louche" ! 📏 Ces mesures ne remplacent pas l\'oeil avisé du contrôleur.<br><br>
+            Si ta valise est une vraie baroudeuse, notre option <b>Bagage XL est dispo à seulement 5€</b> par trajet.
+          </div>
+          <button onclick="window.location.reload()" style="margin-top:15px; padding:10px; border-radius:20px; border:none; background:var(--ouigo-blue); color:white;">Recommencer</button>
+        `;
 
         const material = new THREE.LineBasicMaterial({ color: 0xffffff, linewidth: 4 });
         const geometry = new THREE.BufferGeometry().setFromPoints([points[0], points[1]]);
@@ -533,10 +544,23 @@
         cabinDiv.style.background = 'rgba(0, 229, 255, 0.2)';
         cabinDiv.style.color = 'var(--ouigo-blue)';
       } else {
-        cabinDiv.textContent = '❌ Format trop grand';
+        cabinDiv.textContent = '❌ Ça risque d\'être serré !';
         cabinDiv.style.background = 'rgba(255, 63, 166, 0.2)';
         cabinDiv.style.color = 'var(--ouigo-pink)';
       }
+    // AJOUT DU MESSAGE OUIGO "FEEL GOOD"
+    const disclaimer = document.createElement('p');
+    disclaimer.style.fontSize = '12px';
+    disclaimer.style.marginTop = '15px';
+    disclaimer.style.color = 'var(--ouigo-blue)';
+    disclaimer.style.fontStyle = 'italic';
+    disclaimer.innerHTML = 'Ceci est une estimation "à la louche" ! 📏 Ces mesures ne remplacent pas l\'oeil avisé du contrôleur. Si ta valise est une vraie baroudeuse, notre option <b>Bagage XL est dispo à seulement 5€</b> par trajet.';
+    
+    // On s'assure de ne pas ajouter le message en double si on clique plusieurs fois
+    if (!document.getElementById('disclaimer-text')) {
+        disclaimer.id = 'disclaimer-text';
+        cabinDiv.appendChild(disclaimer);
+    }
 
       document.getElementById('res-class').textContent = CLASS_INFO[bagBox.cls].label;
       document.getElementById('res-dims').textContent = `${bagWcm} × ${bagHcm}`;
